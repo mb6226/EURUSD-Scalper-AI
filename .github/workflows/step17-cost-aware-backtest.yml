@@ -1,0 +1,42 @@
+name: Step 17 - Cost-aware Backtest
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/export_step17_cost_aware_backtest.py"
+      - "results/step15_backtest/step15_trades_A.csv"
+      - "results/step15_backtest/step15_trades_B.csv"
+      - "results/step15_backtest/step15_trades_C.csv"
+      - "results/step15_backtest/step15_trades_D.csv"
+      - "results/step15_backtest/step15_trades_E.csv"
+      - ".github/workflows/step17-cost-aware-backtest.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  step17:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: python -m pip install --upgrade pandas numpy
+      - name: Run Step 17 cost-aware backtest
+        run: python scripts/export_step17_cost_aware_backtest.py
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add results/step17_cost_aware
+          if git diff --cached --quiet; then
+            echo "No Step 17 result changes to commit."
+          else
+            git commit -m "Generate Step 17 cost-aware backtest results"
+            git push
+          fi
