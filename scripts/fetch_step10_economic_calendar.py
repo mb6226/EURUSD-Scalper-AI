@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import re
+import time
 
 import pandas as pd
 import requests
@@ -12,9 +13,13 @@ from bs4 import BeautifulSoup
 ROOT = Path(__file__).resolve().parents[1]
 PRICE = ROOT / "data/eurusd/EURUSD_1m.csv"
 OUT = ROOT / "data/economic/economic_calendar.csv"
+FAILURES = ROOT / "results/step10_economic/calendar_fetch_failures.csv"
+FETCH_STATS = ROOT / "results/step10_economic/calendar_fetch_stats.csv"
 LONDON = ZoneInfo("Europe/London")
 UTC = ZoneInfo("UTC")
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; EURUSD-Scalper-AI/1.0; research)"}
+MAX_RETRIES = 4
+BACKOFF_SECONDS = (5, 15, 30, 60)
 
 
 def parse_number(value: str):
@@ -87,8 +92,8 @@ def resolve_calendar_date(text: str, week_day: date) -> date | None:
 def impact_label(cell) -> str:
     if cell is None:
         return ""
-    span = cell.find("span")
-    text = (span.get("title", "") if span else "") or cell.get_text(" ", strip=True)
+    titles = [span.get("title", "") for span in cell.find_all("span")]
+    text = " ".join(titles) or cell.get_text(" ", strip=True)
     text = text.upper()
     if "HIGH" in text:
         return "HIGH"
@@ -99,83 +104,128 @@ def impact_label(cell) -> str:
     return ""
 
 
-def scrape_week(day: date) -> list[dict]:
+def scrape_week(day: date, session: requests.Session) -> list[dict]:
     url = f"https://www.forexfactory.com/calendar?week={week_key(day)}"
-    response = requests.get(url, headers=HEADERS, timeout=30)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, "html.parser")
-    table = soup.find("table", class_="calendar__table")
-    if table is None:
-        raise RuntimeError(f"Calendar table not found: {url}")
-
-    rows = []
-    current_date = None
-    for tr in table.select("tr.calendar__row.calendar_row"):
-        def cell(field: str):
-            return tr.select_one(f"td.calendar__cell.calendar__{field}.{field}")
-
-        date_cell = cell("date")
-        time_cell = cell("time")
-        if date_cell and date_cell.get_text(strip=True):
-            current_date = resolve_calendar_date(date_cell.get_text(" ", strip=True), day)
-
-        currency_cell = cell("currency")
-        impact_cell = cell("impact")
-        event_cell = cell("event")
-        actual_cell = cell("actual")
-        forecast_cell = cell("forecast")
-        previous_cell = cell("previous")
-        if not (current_date and currency_cell and event_cell):
-            continue
-
-        currency = currency_cell.get_text(strip=True).upper()
-        if currency not in {"EUR", "USD"}:
-            continue
-        impact = impact_label(impact_cell)
-        if not impact:
-            continue
-
-        event = event_cell.get_text(" ", strip=True)
-        actual = actual_cell.get_text(" ", strip=True) if actual_cell else ""
-        forecast = forecast_cell.get_text(" ", strip=True) if forecast_cell else ""
-        previous = previous_cell.get_text(" ", strip=True) if previous_cell else ""
-        time_text = time_cell.get_text(" ", strip=True) if time_cell else "12:00am"
-        if "day" in time_text.lower() or "all day" in time_text.lower():
-            time_text = "12:00am"
+    last_error = None
+    for attempt in range(MAX_RETRIES):
         try:
-            local_dt = datetime.strptime(f"{current_date} {time_text}", "%Y-%m-%d %I:%M%p").replace(tzinfo=LONDON)
-        except ValueError:
-            continue
-        rows.append({
-            "release_time": local_dt.astimezone(UTC).isoformat(),
-            "currency": currency,
-            "impact": impact,
-            "event": event,
-            "bias": compute_bias(currency, event, actual, forecast),
-            "actual": actual,
-            "forecast": forecast,
-            "previous": previous,
-        })
-    return rows
+            response = session.get(url, headers=HEADERS, timeout=30)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+            table = soup.find("table", class_="calendar__table")
+            if table is None:
+                raise RuntimeError(f"Calendar table not found: {url}")
+
+            rows = []
+            current_date = None
+            for tr in table.select("tr.calendar__row.calendar_row"):
+                def cell(field: str):
+                    return tr.select_one(f"td.calendar__cell.calendar__{field}.{field}")
+
+                date_cell = cell("date")
+                time_cell = cell("time")
+                if date_cell and date_cell.get_text(strip=True):
+                    current_date = resolve_calendar_date(date_cell.get_text(" ", strip=True), day)
+
+                currency_cell = cell("currency")
+                impact_cell = cell("impact")
+                event_cell = cell("event")
+                actual_cell = cell("actual")
+                forecast_cell = cell("forecast")
+                previous_cell = cell("previous")
+                if not (current_date and currency_cell and event_cell):
+                    continue
+
+                currency = currency_cell.get_text(strip=True).upper()
+                if currency not in {"EUR", "USD"}:
+                    continue
+                impact = impact_label(impact_cell)
+                if not impact:
+                    continue
+
+                event = event_cell.get_text(" ", strip=True)
+                actual = actual_cell.get_text(" ", strip=True) if actual_cell else ""
+                forecast = forecast_cell.get_text(" ", strip=True) if forecast_cell else ""
+                previous = previous_cell.get_text(" ", strip=True) if previous_cell else ""
+                time_text = time_cell.get_text(" ", strip=True) if time_cell else "12:00am"
+                if "day" in time_text.lower() or "all day" in time_text.lower():
+                    time_text = "12:00am"
+                try:
+                    local_dt = datetime.strptime(f"{current_date} {time_text}", "%Y-%m-%d %I:%M%p").replace(tzinfo=LONDON)
+                except ValueError:
+                    continue
+                rows.append({
+                    "release_time": local_dt.astimezone(UTC).isoformat(),
+                    "currency": currency,
+                    "impact": impact,
+                    "event": event,
+                    "bias": compute_bias(currency, event, actual, forecast),
+                    "actual": actual,
+                    "forecast": forecast,
+                    "previous": previous,
+                })
+            return rows
+        except (requests.RequestException, RuntimeError, ValueError) as exc:
+            last_error = str(exc)
+            if attempt < MAX_RETRIES - 1:
+                delay = BACKOFF_SECONDS[attempt]
+                print(f"  attempt {attempt + 1}/{MAX_RETRIES} failed: {exc}; retrying in {delay}s")
+                time.sleep(delay)
+    raise RuntimeError(last_error or f"Unknown fetch error: {url}")
 
 
 def main() -> None:
     start, end = price_range()
     cursor = start - timedelta(days=(start.weekday() + 1) % 7)
     rows = []
-    while cursor <= end:
-        print(f"Fetching economic calendar week {cursor}")
-        rows.extend(scrape_week(cursor))
-        cursor += timedelta(days=7)
+    failures = []
+    requested_weeks = 0
+
+    with requests.Session() as session:
+        while cursor <= end:
+            requested_weeks += 1
+            print(f"Fetching economic calendar week {cursor}")
+            try:
+                week_rows = scrape_week(cursor, session)
+                rows.extend(week_rows)
+                print(f"  success: {len(week_rows)} EUR/USD events")
+            except Exception as exc:
+                print(f"  FAILED: {exc}")
+                failures.append({
+                    "week_start": cursor.isoformat(),
+                    "week_key": week_key(cursor),
+                    "error": str(exc),
+                })
+            cursor += timedelta(days=7)
 
     df = pd.DataFrame(rows)
     if df.empty:
         raise RuntimeError("No EUR/USD economic events were downloaded")
+
     df = df.drop_duplicates(subset=["release_time", "currency", "event"])
     df["release_time"] = pd.to_datetime(df["release_time"], utc=True)
     df = df.sort_values("release_time")
-    df.to_csv(OUT, index=False)
+
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    FAILURES.parent.mkdir(parents=True, exist_ok=True)
+    tmp_out = OUT.with_suffix(".tmp")
+    df.to_csv(tmp_out, index=False)
+    tmp_out.replace(OUT)
+
+    pd.DataFrame(failures, columns=["week_start", "week_key", "error"]).to_csv(FAILURES, index=False)
+    pd.DataFrame([{
+        "price_start": start.isoformat(),
+        "price_end": end.isoformat(),
+        "requested_weeks": requested_weeks,
+        "successful_weeks": requested_weeks - len(failures),
+        "failed_weeks": len(failures),
+        "event_count": len(df),
+    }]).to_csv(FETCH_STATS, index=False)
+
     print(f"Saved {len(df)} EUR/USD events to {OUT}")
+    print(f"Weeks: {requested_weeks - len(failures)} successful, {len(failures)} failed")
+    if failures:
+        print(f"WARNING: failed weeks recorded in {FAILURES}")
 
 
 if __name__ == "__main__":
