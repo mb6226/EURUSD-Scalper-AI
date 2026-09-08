@@ -92,12 +92,9 @@ def resolve_calendar_date(text: str, week_day: date) -> date | None:
 def impact_label(cell) -> str:
     if cell is None:
         return ""
-
-    # Forex Factory has used several HTML representations for impact.
-    # Prefer explicit title attributes, then fall back to icon classes/text.
     candidates = []
     for node in cell.find_all(True):
-        for attr in ("title", "aria-label", "data-title"):
+        for attr in ("title", "aria-label", "data-title", "alt"):
             value = node.get(attr)
             if value:
                 candidates.append(str(value))
@@ -105,15 +102,13 @@ def impact_label(cell) -> str:
         if isinstance(classes, str):
             classes = classes.split()
         candidates.extend(str(c) for c in classes)
-
     candidates.append(cell.get_text(" ", strip=True))
     text = " ".join(candidates).upper()
-
-    if "HIGH IMPACT" in text or "IMPACT-RED" in text or "IMPACT_RED" in text:
+    if any(x in text for x in ("HIGH IMPACT", "IMPACT-RED", "IMPACT_RED", "FF-IMPACT-RED", "FF_IMPACT_RED")):
         return "HIGH"
-    if "MEDIUM IMPACT" in text or "MEDIUM" in text or "IMPACT-ORANGE" in text or "IMPACT_ORANGE" in text or "IMPACT-YELLOW" in text or "IMPACT_YELLOW" in text:
+    if any(x in text for x in ("MEDIUM IMPACT", "MED IMPACT", "IMPACT-ORANGE", "IMPACT_ORANGE", "IMPACT-YELLOW", "IMPACT_YELLOW", "FF-IMPACT-ORANGE", "FF-IMPACT-YELLOW")):
         return "MEDIUM"
-    if "LOW IMPACT" in text or "IMPACT-GREY" in text or "IMPACT_GRAY" in text or "IMPACT-GRAY" in text:
+    if any(x in text for x in ("LOW IMPACT", "IMPACT-GREY", "IMPACT_GRAY", "IMPACT-GRAY", "FF-IMPACT-GREY", "FF-IMPACT-GRAY")):
         return "LOW"
     return ""
 
@@ -132,9 +127,13 @@ def scrape_week(day: date, session: requests.Session) -> list[dict]:
 
             rows = []
             current_date = None
+            raw_eur_usd_rows = 0
             for tr in table.select("tr.calendar__row.calendar_row"):
                 def cell(field: str):
-                    return tr.select_one(f"td.calendar__cell.calendar__{field}.{field}")
+                    exact = tr.select_one(f"td.calendar__cell.calendar__{field}.{field}")
+                    if exact is not None:
+                        return exact
+                    return tr.select_one(f"td[class*='calendar__{field}']")
 
                 date_cell = cell("date")
                 time_cell = cell("time")
@@ -150,19 +149,25 @@ def scrape_week(day: date, session: requests.Session) -> list[dict]:
                 if not (current_date and currency_cell and event_cell):
                     continue
 
-                currency = currency_cell.get_text(strip=True).upper()
+                currency = currency_cell.get_text(" ", strip=True).upper()
                 if currency not in {"EUR", "USD"}:
                     continue
+                raw_eur_usd_rows += 1
+
                 impact = impact_label(impact_cell)
                 if not impact:
-                    continue
+                    # Do not silently discard the event. The calendar page exposes
+                    # the event itself even when the impact icon markup changes.
+                    # Treat unknown impact as LOW for ingestion only; the downstream
+                    # regime engine can still exclude LOW if configured to do so.
+                    impact = "LOW"
 
                 event = event_cell.get_text(" ", strip=True)
                 actual = actual_cell.get_text(" ", strip=True) if actual_cell else ""
                 forecast = forecast_cell.get_text(" ", strip=True) if forecast_cell else ""
                 previous = previous_cell.get_text(" ", strip=True) if previous_cell else ""
                 time_text = time_cell.get_text(" ", strip=True) if time_cell else "12:00am"
-                if "day" in time_text.lower() or "all day" in time_text.lower():
+                if "day" in time_text.lower() or "all day" in time_text.lower() or "tentative" in time_text.lower():
                     time_text = "12:00am"
                 try:
                     local_dt = datetime.strptime(f"{current_date} {time_text}", "%Y-%m-%d %I:%M%p").replace(tzinfo=LONDON)
@@ -178,6 +183,9 @@ def scrape_week(day: date, session: requests.Session) -> list[dict]:
                     "forecast": forecast,
                     "previous": previous,
                 })
+
+            if not rows and raw_eur_usd_rows:
+                raise RuntimeError(f"Found {raw_eur_usd_rows} EUR/USD rows but parsed 0 events: {url}")
             return rows
         except (requests.RequestException, RuntimeError, ValueError) as exc:
             last_error = str(exc)
@@ -205,11 +213,7 @@ def main() -> None:
                 print(f"  success: {len(week_rows)} EUR/USD events")
             except Exception as exc:
                 print(f"  FAILED: {exc}")
-                failures.append({
-                    "week_start": cursor.isoformat(),
-                    "week_key": week_key(cursor),
-                    "error": str(exc),
-                })
+                failures.append({"week_start": cursor.isoformat(), "week_key": week_key(cursor), "error": str(exc)})
             cursor += timedelta(days=7)
 
     df = pd.DataFrame(rows)
@@ -222,6 +226,7 @@ def main() -> None:
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     FAILURES.parent.mkdir(parents=True, exist_ok=True)
+    FETCH_STATS.parent.mkdir(parents=True, exist_ok=True)
     tmp_out = OUT.with_suffix(".tmp")
     df.to_csv(tmp_out, index=False)
     tmp_out.replace(OUT)
