@@ -140,17 +140,25 @@ def impact_label(cell) -> str:
 
 
 def _canonical_time_text(time_cell) -> str | None:
-    """Read release time only from semantic <time> nodes in the canonical time cell."""
+    """Read only an exact HH:MM am/pm token from the canonical time cell.
+
+    Forex Factory currently renders the release time as plain text in the
+    canonical cell; some historical/reference rows in the same cell contain
+    strings such as "Sep Data". Those are not release times and are rejected.
+    """
     if time_cell is None: return None
-    valid = []
-    for node in time_cell.find_all("time", recursive=True):
-        for value in (node.get("datetime"), node.get_text(" ", strip=True)):
-            if not value: continue
-            m = TIME_RE.fullmatch(" ".join(str(value).split()))
-            if m: valid.append(f"{int(m.group('hour'))}:{m.group('minute') or '00'}{m.group('ampm').lower()}")
-    unique = set(valid)
-    if len(unique) == 1: return valid[0]
-    if len(unique) > 1: raise RuntimeError("Canonical Forex Factory time cell contains conflicting <time> values")
+    candidates = []
+    for node in [time_cell, *time_cell.find_all(True)]:
+        for attr in ("datetime", "data-time", "data-event-time"):
+            value = node.get(attr)
+            if value:
+                value = " ".join(str(value).split())
+                if TIME_RE.fullmatch(value): candidates.append(value)
+        text = " ".join(node.get_text(" ", strip=True).split())
+        if TIME_RE.fullmatch(text): candidates.append(text)
+    unique = {f"{int(TIME_RE.fullmatch(v).group('hour'))}:{TIME_RE.fullmatch(v).group('minute') or '00'}{TIME_RE.fullmatch(v).group('ampm').lower()}" for v in candidates}
+    if len(unique) == 1: return next(iter(unique))
+    if len(unique) > 1: raise RuntimeError("Canonical Forex Factory time cell contains conflicting exact release times")
     return None
 
 
