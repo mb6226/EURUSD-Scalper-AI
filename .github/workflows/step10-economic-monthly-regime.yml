@@ -6,6 +6,7 @@ on:
     paths:
       - "scripts/export_step10_economic_monthly_regime.py"
       - "scripts/fetch_step10_economic_calendar.py"
+      - "scripts/validate_step10_pit_timezone.py"
       - "data/economic/economic_calendar.csv"
       - "data/economic/monthly_regime_seed.csv"
       - "data/eurusd/EURUSD_1m.csv"
@@ -31,6 +32,9 @@ jobs:
 
       - name: Build point-in-time stateful regime
         run: python scripts/export_step10_economic_monthly_regime.py
+
+      - name: Validate Step 10 PIT and timezone integrity
+        run: python scripts/validate_step10_pit_timezone.py
 
       - name: Commit Step 10 data and results
         run: |
