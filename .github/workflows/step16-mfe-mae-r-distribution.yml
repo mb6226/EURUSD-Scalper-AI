@@ -1,0 +1,27 @@
+name: Step 16 - MFE MAE R Distribution
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  step16:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install pandas numpy
+      - name: Run Step 16
+        run: python scripts/export_step16_mfe_mae_r_distribution.py
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add results/step16_mfe_mae
+          git diff --cached --quiet || git commit -m "Generate Step 16 MFE MAE R distribution results"
+          git push
