@@ -88,31 +88,6 @@ def resolve_calendar_date(text: str, week_day: date) -> date | None:
         return None
 
 
-def extract_page_timezone(soup: BeautifulSoup) -> tuple[str, ZoneInfo]:
-    """Read the timezone advertised by the fetched Forex Factory page.
-
-    We intentionally do not hard-code a source timezone. The event's displayed
-    local clock is only meaningful together with the timezone selected by the
-    source/page context. If the page does not expose a usable IANA timezone,
-    fail closed rather than manufacturing a UTC timestamp.
-    """
-    text = soup.get_text(" ", strip=True)
-    patterns = (
-        r"Calendar\s+Time\s+Zone\s*:\s*([A-Za-z_]+(?:/[A-Za-z0-9_+\-]+)+)",
-        r"Time\s+Zone\s*:\s*([A-Za-z_]+(?:/[A-Za-z0-9_+\-]+)+)",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
-        if not match:
-            continue
-        name = match.group(1)
-        try:
-            return name, ZoneInfo(name)
-        except ZoneInfoNotFoundError:
-            raise RuntimeError(f"Forex Factory advertised unknown IANA timezone: {name}")
-    raise RuntimeError("Forex Factory page did not expose a usable IANA calendar timezone")
-
-
 def _class_tokens(tag) -> set[str]:
     if tag is None:
         return set()
@@ -120,6 +95,48 @@ def _class_tokens(tag) -> set[str]:
     if isinstance(classes, str):
         classes = classes.split()
     return {str(x) for x in classes}
+
+
+def extract_page_timezone(soup: BeautifulSoup) -> tuple[str, ZoneInfo]:
+    """Extract the complete advertised IANA timezone without accepting fragments."""
+    text = soup.get_text(" ", strip=True)
+    # Require a complete region/city pair. In particular, never accept fragments
+    # such as ``America/New`` produced by an incomplete HTML attribute/value.
+    candidates = []
+    for pattern in (
+        r"Calendar\s+Time\s+Zone\s*:\s*([A-Za-z_]+/[A-Za-z0-9_+\-]+(?:/[A-Za-z0-9_+\-]+)*)",
+        r"Time\s+Zone\s*:\s*([A-Za-z_]+/[A-Za-z0-9_+\-]+(?:/[A-Za-z0-9_+\-]+)*)",
+    ):
+        candidates.extend(re.findall(pattern, text, flags=re.IGNORECASE))
+
+    for name in candidates:
+        try:
+            return name, ZoneInfo(name)
+        except ZoneInfoNotFoundError:
+            continue
+
+    # Forex Factory's HTML can expose the timezone as a user-facing label rather
+    # than a direct IANA identifier. Map only known, explicit labels; never guess
+    # from a malformed prefix.
+    label_map = {
+        "GMT": "Etc/GMT",
+        "UTC": "UTC",
+        "EUROPE/LONDON": "Europe/London",
+        "LONDON": "Europe/London",
+        "NEW YORK": "America/New_York",
+        "NEW YORK TIME": "America/New_York",
+        "TOKYO": "Asia/Tokyo",
+        "SYDNEY": "Australia/Sydney",
+    }
+    upper = text.upper()
+    for label, name in label_map.items():
+        if label in upper:
+            try:
+                return name, ZoneInfo(name)
+            except ZoneInfoNotFoundError:
+                pass
+
+    raise RuntimeError("Forex Factory page did not expose a complete supported calendar timezone")
 
 
 def _find_cell(tr, field: str):
@@ -148,8 +165,6 @@ def _numeric_timestamp(value: str | None) -> datetime | None:
         number = float(str(value).strip())
     except ValueError:
         return None
-    # Forex Factory integrations commonly expose Unix timestamps in either
-    # seconds or milliseconds. Normalize both to an aware UTC datetime.
     if number > 10_000_000_000:
         number /= 1000.0
     if number < 1_000_000_000 or number > 4_500_000_000:
@@ -158,13 +173,12 @@ def _numeric_timestamp(value: str | None) -> datetime | None:
 
 
 def row_source_timestamp(tr) -> datetime | None:
-    """Use an explicit source timestamp when the HTML exposes one."""
+    """Use an explicit source timestamp when the row exposes one."""
     attrs = (
         "data-timestamp", "data-event-timestamp", "data-time",
         "data-utc-timestamp", "data-release-timestamp",
     )
-    nodes = [tr, *tr.find_all(True)]
-    for node in nodes:
+    for node in [tr, *tr.find_all(True)]:
         for attr in attrs:
             timestamp = _numeric_timestamp(node.get(attr))
             if timestamp is not None:
