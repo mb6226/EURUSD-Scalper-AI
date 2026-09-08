@@ -12,6 +12,9 @@ on:
         required: false
         default: '2026-09-08'
 
+permissions:
+  contents: write
+
 jobs:
   download:
     runs-on: ubuntu-latest
@@ -19,6 +22,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -36,9 +41,9 @@ jobs:
           END_DATE: ${{ inputs.end_date }}
         run: |
           cat > build_data.py <<'PY'
-          import os, zipfile, glob, subprocess
+          import os, zipfile, glob
           from pathlib import Path
-          from datetime import date, datetime
+          from datetime import date
           import pandas as pd
           from histdata import download_hist_data
           from histdata.api import Platform, TimeFrame
@@ -50,34 +55,19 @@ jobs:
           raw.mkdir(exist_ok=True)
           out.mkdir(parents=True, exist_ok=True)
 
-          # HistData serves past years as a yearly M1 archive and the current
-          # year month-by-month. Download only the years/months intersecting
-          # the requested range, then filter exactly to the requested dates.
-          years = range(start.year, end.year + 1)
-          for year in years:
-              if year < end.year:
-                  target = raw / f'{year}'
+          for year in range(start.year, end.year + 1):
+              first_month = start.month if year == start.year else 1
+              last_month = end.month if year == end.year else 12
+              for month in range(first_month, last_month + 1):
+                  target = raw / str(year)
                   target.mkdir(exist_ok=True)
-                  print(f'Downloading EURUSD M1 {year}...')
+                  print(f'Downloading EURUSD M1 {year}-{month:02d}...')
                   download_hist_data(
-                      year=str(year), month=None, pair='eurusd',
+                      year=str(year), month=str(month), pair='eurusd',
                       platform=Platform.GENERIC_ASCII,
                       time_frame=TimeFrame.ONE_MINUTE,
                       output_directory=str(target), verbose=True,
                   )
-              else:
-                  first_month = start.month if year == start.year else 1
-                  last_month = end.month
-                  for month in range(first_month, last_month + 1):
-                      target = raw / f'{year}'
-                      target.mkdir(exist_ok=True)
-                      print(f'Downloading EURUSD M1 {year}-{month:02d}...')
-                      download_hist_data(
-                          year=str(year), month=str(month), pair='eurusd',
-                          platform=Platform.GENERIC_ASCII,
-                          time_frame=TimeFrame.ONE_MINUTE,
-                          output_directory=str(target), verbose=True,
-                      )
 
           zips = sorted(glob.glob('raw/**/*.zip', recursive=True))
           if not zips:
@@ -87,17 +77,12 @@ jobs:
           for z in zips:
               with zipfile.ZipFile(z) as zz:
                   csvs = [n for n in zz.namelist() if n.lower().endswith('.csv')]
-                  if not csvs:
-                      continue
-                  with zz.open(csvs[0]) as f:
-                      df = pd.read_csv(
-                          f, sep=';', header=None,
-                          names=['timestamp','open','high','low','close','volume'],
-                      )
-                  frames.append(df)
-
-          if not frames:
-              raise RuntimeError('No CSV data found inside downloaded archives.')
+                  for csv_name in csvs:
+                      with zz.open(csv_name) as f:
+                          frames.append(pd.read_csv(
+                              f, sep=';', header=None,
+                              names=['timestamp','open','high','low','close','volume']
+                          ))
 
           df = pd.concat(frames, ignore_index=True)
           df['timestamp'] = pd.to_datetime(df['timestamp'], format='%Y%m%d %H%M%S', errors='coerce')
@@ -106,8 +91,6 @@ jobs:
           df = df.dropna(subset=['timestamp','open','high','low','close'])
           df = df.drop_duplicates('timestamp').sort_values('timestamp')
 
-          # HistData timestamps are EST without DST adjustments. Keep the raw
-          # source clock explicit rather than silently converting it.
           start_ts = pd.Timestamp(start)
           end_ts = pd.Timestamp(end) + pd.Timedelta(days=1) - pd.Timedelta(minutes=1)
           df = df[(df['timestamp'] >= start_ts) & (df['timestamp'] <= end_ts)].copy()
@@ -128,23 +111,16 @@ jobs:
           one_min.to_csv(out / 'EURUSD_1m.csv', index=False)
           five_min.to_csv(out / 'EURUSD_5m.csv', index=False)
 
-          manifest = out / 'MANIFEST.txt'
-          manifest.write_text(
+          (out / 'MANIFEST.txt').write_text(
               f'EURUSD historical OHLCV\n'
               f'Source: HistData.com Generic ASCII M1\n'
-              f'Range requested: {start} to {end}\n'
+              f'Requested range: {start} to {end}\n'
               f'1m rows: {len(one_min):,}\n'
               f'5m rows: {len(five_min):,}\n'
-              f'Timestamp source clock: EST without DST adjustments\n'
-              f'5m bars: aggregated from canonical 1m bars\n',
-              encoding='utf-8',
+              f'Volume: source tick volume, not centralized FX volume\n'
+              f'5m bars are aggregated from canonical 1m bars\n',
+              encoding='utf-8'
           )
-
-          print(one_min.head())
-          print(one_min.tail())
-          print(f'1m rows: {len(one_min):,}')
-          print(f'5m rows: {len(five_min):,}')
-          print('Output:', out.resolve())
           PY
           python build_data.py
 
@@ -155,22 +131,31 @@ jobs:
           from pathlib import Path
           for p in [Path('data/eurusd/EURUSD_1m.parquet'), Path('data/eurusd/EURUSD_5m.parquet')]:
               df = pd.read_parquet(p)
-              assert not df.empty, f'{p} is empty'
-              assert df[['open','high','low','close']].notna().all().all(), f'NaN OHLC in {p}'
-              assert (df['high'] >= df[['open','close','low']].max(axis=1)).all(), f'Invalid highs in {p}'
-              assert (df['low'] <= df[['open','close','high']].min(axis=1)).all(), f'Invalid lows in {p}'
-              assert df['timestamp'].is_monotonic_increasing, f'Timestamps not sorted in {p}'
-              assert not df['timestamp'].duplicated().any(), f'Duplicate timestamps in {p}'
-              print(p, len(df), df.timestamp.min(), df.timestamp.max())
+              assert not df.empty
+              assert df['timestamp'].is_monotonic_increasing
+              assert not df['timestamp'].duplicated().any()
+              assert (df['high'] >= df[['open','close','low']].max(axis=1)).all()
+              assert (df['low'] <= df[['open','close','high']].min(axis=1)).all()
+              print(f'{p}: {len(df):,} rows, {df.timestamp.min()} -> {df.timestamp.max()}')
           PY
 
-      - name: Package data
-        run: tar -czf EURUSD_1Y_OHLCV.tar.gz data/eurusd
+      - name: Commit data into repository
+        run: |
+          rm -rf raw build_data.py
+          git add data/eurusd/
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --cached --quiet; then
+            echo 'No data changes to commit.'
+          else
+            git commit -m "Add EURUSD 1m and 5m historical data"
+            git push origin HEAD:main
+          fi
 
-      - name: Upload EURUSD dataset artifact
+      - name: Upload backup artifact
         uses: actions/upload-artifact@v4
         with:
           name: EURUSD-1Y-OHLCV-1m-5m
-          path: EURUSD_1Y_OHLCV.tar.gz
+          path: data/eurusd/
           retention-days: 14
           compression-level: 0
