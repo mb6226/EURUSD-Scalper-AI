@@ -1,0 +1,2 @@
+depth,deviation_points,backstep,point,pivot_count,swing_count,fibo_eligible_swings,min_swing_pips,max_swing_pips,median_swing_pips,min_prior_swing_pips,max_prior_swing_pips,median_prior_swing_pips,min_bars,max_bars,median_bars
+350,125,40,1e-05,732,731,730,6.399999999999739,296.7999999999993,36.599999999999966,6.399999999999739,296.7999999999993,36.54999999999964,3,2768,397.0
