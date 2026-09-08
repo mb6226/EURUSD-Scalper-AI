@@ -1,0 +1,14 @@
+check,value,status
+historical_calendar_fetch_complete,1,PASS
+calendar_fetch_failure_rows,0,PASS
+calendar_rows,1672,PASS
+calendar_invalid_timestamps,0,PASS
+calendar_duplicate_release_keys,0,PASS
+calendar_release_time_sorted,1,PASS
+london_dst_winter_0930_utc_hour,9,PASS
+london_dst_summer_0930_utc_hour,8,PASS
+utc_roundtrip_integrity,1,PASS
+event_state_sorted_by_release_time,1,PASS
+event_state_required_columns,1,PASS
+daily_required_columns,1,PASS
+one_opening_regime_per_month,1,PASS
