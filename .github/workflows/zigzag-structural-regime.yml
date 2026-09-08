@@ -6,9 +6,12 @@ on:
     paths:
       - 'results/zigzag_quarterly/**'
       - 'scripts/zigzag_structural_regime.py'
-      - 'scripts/zigzag_mt5.py'
+      - 'src/zigzag_mt5.py'
       - 'scripts/evaluate_zigzag_temporal.py'
       - '.github/workflows/zigzag-structural-regime.yml'
+
+permissions:
+  contents: write
 
 jobs:
   validate:
