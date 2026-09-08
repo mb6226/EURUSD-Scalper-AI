@@ -1,0 +1,17 @@
+{
+  "purpose": "Step 18 - Cost sensitivity and break-even analysis",
+  "source": "results/step17_cost_aware/step17_cost_sensitivity.csv",
+  "cost_grid_roundtrip_pips": [
+    0.0,
+    0.5,
+    1.0,
+    1.5,
+    2.0,
+    2.5
+  ],
+  "break_even_definition": "Round-trip cost where net expectancy reaches 0R.",
+  "break_even_method": "Use linear interpolation when the observed sensitivity grid brackets zero; otherwise use the linear cost model implied by gross expectancy and average 1-pip cost in R.",
+  "cost_model_inherited_from_step17": "net_R = gross_R - roundtrip_cost_pips / trade_ATR14_pips",
+  "ranking": "Higher break-even round-trip cost means greater cost tolerance.",
+  "not_a_profitability_claim": "Break-even is conditional on Step 17's entry/SL/TP rules and explicit cost assumptions; it is not evidence of live profitability or broker-executable edge."
+}
