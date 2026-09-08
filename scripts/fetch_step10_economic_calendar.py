@@ -84,6 +84,21 @@ def resolve_calendar_date(text: str, week_day: date) -> date | None:
         return None
 
 
+def impact_label(cell) -> str:
+    if cell is None:
+        return ""
+    span = cell.find("span")
+    text = (span.get("title", "") if span else "") or cell.get_text(" ", strip=True)
+    text = text.upper()
+    if "HIGH" in text:
+        return "HIGH"
+    if "MED" in text:
+        return "MEDIUM"
+    if "LOW" in text:
+        return "LOW"
+    return ""
+
+
 def scrape_week(day: date) -> list[dict]:
     url = f"https://www.forexfactory.com/calendar?week={week_key(day)}"
     response = requests.get(url, headers=HEADERS, timeout=30)
@@ -116,14 +131,8 @@ def scrape_week(day: date) -> list[dict]:
         currency = currency_cell.get_text(strip=True).upper()
         if currency not in {"EUR", "USD"}:
             continue
-        impact_text = impact_cell.get_text(strip=True).upper() if impact_cell else ""
-        if "HIGH" in impact_text:
-            impact = "HIGH"
-        elif "MED" in impact_text:
-            impact = "MEDIUM"
-        elif "LOW" in impact_text:
-            impact = "LOW"
-        else:
+        impact = impact_label(impact_cell)
+        if not impact:
             continue
 
         event = event_cell.get_text(" ", strip=True)
