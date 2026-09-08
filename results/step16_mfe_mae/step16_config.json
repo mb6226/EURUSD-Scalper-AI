@@ -1,0 +1,13 @@
+{
+  "purpose": "Step 16 - MFE/MAE + R distribution diagnostics",
+  "source": "Step 15 trade-level CSVs",
+  "lookahead": "Outcome diagnostics only; no features are used for entry selection.",
+  "thresholds_R": [
+    0.5,
+    1.0,
+    1.5,
+    2.0
+  ],
+  "before_stop_definition": "MFE threshold reached while MAE remains above -1R over the recorded trade path",
+  "note": "MFE/MAE are post-entry diagnostics and must not be used as predictive filters."
+}

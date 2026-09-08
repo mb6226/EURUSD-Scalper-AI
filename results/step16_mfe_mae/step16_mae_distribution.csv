@@ -1,0 +1,41 @@
+metric,bin,count,pct,model
+mae_r,<=-2R,10,6.172839506172839,A_Breakout
+mae_r,-2 to -1.5R,16,9.876543209876543,A_Breakout
+mae_r,-1.5 to -1.25R,22,13.580246913580247,A_Breakout
+mae_r,-1.25 to -1R,30,18.51851851851852,A_Breakout
+mae_r,-1 to -0.75R,7,4.320987654320987,A_Breakout
+mae_r,-0.75 to -0.5R,16,9.876543209876543,A_Breakout
+mae_r,-0.5 to -0.25R,23,14.197530864197532,A_Breakout
+mae_r,-0.25 to 0R,25,15.432098765432098,A_Breakout
+mae_r,<=-2R,10,6.329113924050633,B_Break_Retest
+mae_r,-2 to -1.5R,17,10.759493670886076,B_Break_Retest
+mae_r,-1.5 to -1.25R,15,9.49367088607595,B_Break_Retest
+mae_r,-1.25 to -1R,34,21.518987341772153,B_Break_Retest
+mae_r,-1 to -0.75R,15,9.49367088607595,B_Break_Retest
+mae_r,-0.75 to -0.5R,18,11.39240506329114,B_Break_Retest
+mae_r,-0.5 to -0.25R,20,12.658227848101266,B_Break_Retest
+mae_r,-0.25 to 0R,21,13.291139240506329,B_Break_Retest
+mae_r,<=-2R,6,4.411764705882353,C_Fibonacci_Rejection
+mae_r,-2 to -1.5R,17,12.5,C_Fibonacci_Rejection
+mae_r,-1.5 to -1.25R,21,15.441176470588236,C_Fibonacci_Rejection
+mae_r,-1.25 to -1R,41,30.147058823529413,C_Fibonacci_Rejection
+mae_r,-1 to -0.75R,6,4.411764705882353,C_Fibonacci_Rejection
+mae_r,-0.75 to -0.5R,7,5.147058823529412,C_Fibonacci_Rejection
+mae_r,-0.5 to -0.25R,13,9.558823529411764,C_Fibonacci_Rejection
+mae_r,-0.25 to 0R,15,11.029411764705882,C_Fibonacci_Rejection
+mae_r,<=-2R,5,3.0864197530864197,D_M1_Structure_Break
+mae_r,-2 to -1.5R,19,11.728395061728396,D_M1_Structure_Break
+mae_r,-1.5 to -1.25R,15,9.25925925925926,D_M1_Structure_Break
+mae_r,-1.25 to -1R,38,23.45679012345679,D_M1_Structure_Break
+mae_r,-1 to -0.75R,13,8.024691358024691,D_M1_Structure_Break
+mae_r,-0.75 to -0.5R,17,10.493827160493828,D_M1_Structure_Break
+mae_r,-0.5 to -0.25R,21,12.962962962962964,D_M1_Structure_Break
+mae_r,-0.25 to 0R,16,9.876543209876543,D_M1_Structure_Break
+mae_r,<=-2R,10,6.172839506172839,E_Momentum_Continuation
+mae_r,-2 to -1.5R,17,10.493827160493828,E_Momentum_Continuation
+mae_r,-1.5 to -1.25R,18,11.11111111111111,E_Momentum_Continuation
+mae_r,-1.25 to -1R,32,19.753086419753085,E_Momentum_Continuation
+mae_r,-1 to -0.75R,8,4.938271604938271,E_Momentum_Continuation
+mae_r,-0.75 to -0.5R,16,9.876543209876543,E_Momentum_Continuation
+mae_r,-0.5 to -0.25R,24,14.814814814814815,E_Momentum_Continuation
+mae_r,-0.25 to 0R,20,12.345679012345679,E_Momentum_Continuation

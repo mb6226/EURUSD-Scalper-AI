@@ -1,0 +1,46 @@
+metric,bin,count,pct,model
+r_multiple,<-1R,38,23.45679012345679,A_Breakout
+r_multiple,-1 to -0.5R,41,25.308641975308642,A_Breakout
+r_multiple,-0.5 to 0R,0,0.0,A_Breakout
+r_multiple,0 to 0.5R,0,0.0,A_Breakout
+r_multiple,0.5 to 1R,0,0.0,A_Breakout
+r_multiple,1 to 1.5R,41,25.308641975308642,A_Breakout
+r_multiple,1.5 to 2R,42,25.925925925925927,A_Breakout
+r_multiple,2 to 3R,0,0.0,A_Breakout
+r_multiple,>=3R,0,0.0,A_Breakout
+r_multiple,<-1R,38,24.050632911392405,B_Break_Retest
+r_multiple,-1 to -0.5R,40,25.31645569620253,B_Break_Retest
+r_multiple,-0.5 to 0R,0,0.0,B_Break_Retest
+r_multiple,0 to 0.5R,0,0.0,B_Break_Retest
+r_multiple,0.5 to 1R,0,0.0,B_Break_Retest
+r_multiple,1 to 1.5R,41,25.949367088607595,B_Break_Retest
+r_multiple,1.5 to 2R,39,24.68354430379747,B_Break_Retest
+r_multiple,2 to 3R,0,0.0,B_Break_Retest
+r_multiple,>=3R,0,0.0,B_Break_Retest
+r_multiple,<-1R,41,30.147058823529413,C_Fibonacci_Rejection
+r_multiple,-1 to -0.5R,45,33.088235294117645,C_Fibonacci_Rejection
+r_multiple,-0.5 to 0R,0,0.0,C_Fibonacci_Rejection
+r_multiple,0 to 0.5R,0,0.0,C_Fibonacci_Rejection
+r_multiple,0.5 to 1R,0,0.0,C_Fibonacci_Rejection
+r_multiple,1 to 1.5R,25,18.38235294117647,C_Fibonacci_Rejection
+r_multiple,1.5 to 2R,25,18.38235294117647,C_Fibonacci_Rejection
+r_multiple,2 to 3R,0,0.0,C_Fibonacci_Rejection
+r_multiple,>=3R,0,0.0,C_Fibonacci_Rejection
+r_multiple,<-1R,43,26.54320987654321,D_M1_Structure_Break
+r_multiple,-1 to -0.5R,34,20.987654320987655,D_M1_Structure_Break
+r_multiple,-0.5 to 0R,0,0.0,D_M1_Structure_Break
+r_multiple,0 to 0.5R,0,0.0,D_M1_Structure_Break
+r_multiple,0.5 to 1R,0,0.0,D_M1_Structure_Break
+r_multiple,1 to 1.5R,45,27.77777777777778,D_M1_Structure_Break
+r_multiple,1.5 to 2R,40,24.691358024691358,D_M1_Structure_Break
+r_multiple,2 to 3R,0,0.0,D_M1_Structure_Break
+r_multiple,>=3R,0,0.0,D_M1_Structure_Break
+r_multiple,<-1R,39,24.074074074074073,E_Momentum_Continuation
+r_multiple,-1 to -0.5R,38,23.45679012345679,E_Momentum_Continuation
+r_multiple,-0.5 to 0R,0,0.0,E_Momentum_Continuation
+r_multiple,0 to 0.5R,0,0.0,E_Momentum_Continuation
+r_multiple,0.5 to 1R,0,0.0,E_Momentum_Continuation
+r_multiple,1 to 1.5R,37,22.839506172839506,E_Momentum_Continuation
+r_multiple,1.5 to 2R,48,29.62962962962963,E_Momentum_Continuation
+r_multiple,2 to 3R,0,0.0,E_Momentum_Continuation
+r_multiple,>=3R,0,0.0,E_Momentum_Continuation

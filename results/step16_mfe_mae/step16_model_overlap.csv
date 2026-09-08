@@ -1,0 +1,11 @@
+model_a,model_b,common_swing_ids,union_swing_ids,jaccard_pct
+A_Breakout,B_Break_Retest,158,162,97.53086419753086
+A_Breakout,C_Fibonacci_Rejection,136,162,83.95061728395062
+A_Breakout,D_M1_Structure_Break,162,162,100.0
+A_Breakout,E_Momentum_Continuation,162,162,100.0
+B_Break_Retest,C_Fibonacci_Rejection,135,159,84.90566037735849
+B_Break_Retest,D_M1_Structure_Break,158,162,97.53086419753086
+B_Break_Retest,E_Momentum_Continuation,158,162,97.53086419753086
+C_Fibonacci_Rejection,D_M1_Structure_Break,136,162,83.95061728395062
+C_Fibonacci_Rejection,E_Momentum_Continuation,136,162,83.95061728395062
+D_M1_Structure_Break,E_Momentum_Continuation,162,162,100.0
