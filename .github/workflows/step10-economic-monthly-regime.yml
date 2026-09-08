@@ -1,0 +1,41 @@
+name: Step 10 - Economic Monthly Regime
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/export_step10_economic_monthly_regime.py"
+      - "data/economic/economic_calendar.csv"
+      - "data/economic/monthly_regime_seed.csv"
+
+permissions:
+  contents: write
+
+jobs:
+  step10:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pandas
+
+      - name: Run Step 10
+        run: python scripts/export_step10_economic_monthly_regime.py
+
+      - name: Commit Step 10 results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add results/step10_economic
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Add Step 10 economic monthly regime"
+          git pull --rebase origin main
+          git push origin HEAD:main
