@@ -1,2 +1,2 @@
-price_start,price_end,requested_weeks,successful_weeks,failed_weeks,event_count
-2025-09-08,2026-09-04,52,52,0,1763
+price_start,price_end,requested_weeks,successful_weeks,failed_weeks,event_count,timezone_count
+2025-09-08,2026-09-04,52,34,18,1658,1
