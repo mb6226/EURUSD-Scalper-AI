@@ -92,14 +92,28 @@ def resolve_calendar_date(text: str, week_day: date) -> date | None:
 def impact_label(cell) -> str:
     if cell is None:
         return ""
-    titles = [span.get("title", "") for span in cell.find_all("span")]
-    text = " ".join(titles) or cell.get_text(" ", strip=True)
-    text = text.upper()
-    if "HIGH" in text:
+
+    # Forex Factory has used several HTML representations for impact.
+    # Prefer explicit title attributes, then fall back to icon classes/text.
+    candidates = []
+    for node in cell.find_all(True):
+        for attr in ("title", "aria-label", "data-title"):
+            value = node.get(attr)
+            if value:
+                candidates.append(str(value))
+        classes = node.get("class", [])
+        if isinstance(classes, str):
+            classes = classes.split()
+        candidates.extend(str(c) for c in classes)
+
+    candidates.append(cell.get_text(" ", strip=True))
+    text = " ".join(candidates).upper()
+
+    if "HIGH IMPACT" in text or "IMPACT-RED" in text or "IMPACT_RED" in text:
         return "HIGH"
-    if "MED" in text:
+    if "MEDIUM IMPACT" in text or "MEDIUM" in text or "IMPACT-ORANGE" in text or "IMPACT_ORANGE" in text or "IMPACT-YELLOW" in text or "IMPACT_YELLOW" in text:
         return "MEDIUM"
-    if "LOW" in text:
+    if "LOW IMPACT" in text or "IMPACT-GREY" in text or "IMPACT_GRAY" in text or "IMPACT-GRAY" in text:
         return "LOW"
     return ""
 
