@@ -1,0 +1,44 @@
+name: ZigZag Step 8 - 5m LWMA Trend
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/export_zigzag_step8_lwma_trend.py'
+      - 'src/zigzag_mt5.py'
+      - 'data/eurusd/EURUSD_1m.csv'
+      - 'data/eurusd/EURUSD_5m.csv'
+      - '.github/workflows/zigzag-step8-lwma-trend.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  step8:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pandas numpy
+
+      - name: Run Step 8
+        run: python scripts/export_zigzag_step8_lwma_trend.py
+
+      - name: Commit results
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add results/zigzag_step8
+          if git diff --cached --quiet; then
+            echo 'No result changes to commit.'
+          else
+            git commit -m 'Add Step 8 5m LWMA trend results'
+            git push
+          fi
