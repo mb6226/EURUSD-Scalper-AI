@@ -29,7 +29,7 @@ jobs:
       - name: Validate Step 3 inputs
         run: |
           test -f results/zigzag_quarterly/quarter_top20.csv
-          test -f data/eurusd/eurusd_m1.csv
+          test -f data/eurusd/EURUSD_1m.csv
 
       - name: Run Step 5
         run: python scripts/zigzag_structural_regime.py
