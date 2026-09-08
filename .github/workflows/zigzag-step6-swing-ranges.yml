@@ -1,0 +1,41 @@
+name: ZigZag Step 6 - Swing Range Export
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/export_zigzag_swing_ranges.py'
+      - 'src/zigzag_mt5.py'
+      - 'data/eurusd/EURUSD_1m.csv'
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pandas numpy
+
+      - name: Export swing ranges
+        run: python scripts/export_zigzag_swing_ranges.py
+
+      - name: Commit results
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add results/zigzag_step6/
+          git diff --cached --quiet || git commit -m 'Add Step 6 ZigZag swing range results'
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
