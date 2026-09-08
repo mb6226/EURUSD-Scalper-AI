@@ -1,0 +1,44 @@
+name: Step 11 - Economic Regime Filter
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/export_step11_economic_regime_filter.py"
+      - "results/zigzag_step9/aligned_swings_with_fibo.csv"
+      - "results/zigzag_step8/swings_with_lwma_trend.csv"
+      - "results/step10_economic/daily_economic_regime.csv"
+
+permissions:
+  contents: write
+
+jobs:
+  step11:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pandas
+
+      - name: Run Step 11 economic regime filter
+        run: python scripts/export_step11_economic_regime_filter.py
+
+      - name: Commit Step 11 results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add results/step11_economic_regime
+          if git diff --cached --quiet; then
+            echo "No Step 11 result changes to commit."
+            exit 0
+          fi
+          git commit -m "Add Step 11 economic regime filter results"
+          git pull --rebase origin main
+          git push origin HEAD:main
