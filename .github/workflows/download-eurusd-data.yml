@@ -50,24 +50,45 @@ jobs:
 
           start = date.fromisoformat(os.environ['START_DATE'])
           end = date.fromisoformat(os.environ['END_DATE'])
+          if start > end:
+              raise ValueError('START_DATE must be <= END_DATE')
+
           raw = Path('raw')
           out = Path('data/eurusd')
           raw.mkdir(exist_ok=True)
           out.mkdir(parents=True, exist_ok=True)
 
+          current_year = date.today().year
+
+          # HistData API contract:
+          # - past years: query once with month=None (year archive)
+          # - current year: query individual months
           for year in range(start.year, end.year + 1):
-              first_month = start.month if year == start.year else 1
-              last_month = end.month if year == end.year else 12
-              for month in range(first_month, last_month + 1):
-                  target = raw / str(year)
-                  target.mkdir(exist_ok=True)
-                  print(f'Downloading EURUSD M1 {year}-{month:02d}...')
+              target = raw / str(year)
+              target.mkdir(exist_ok=True)
+
+              if year < current_year:
+                  print(f'Downloading EURUSD M1 full year {year}...')
                   download_hist_data(
-                      year=str(year), month=str(month), pair='eurusd',
+                      year=str(year), month=None, pair='eurusd',
                       platform=Platform.GENERIC_ASCII,
                       time_frame=TimeFrame.ONE_MINUTE,
                       output_directory=str(target), verbose=True,
                   )
+              elif year == current_year:
+                  first_month = start.month if year == start.year else 1
+                  last_month = end.month if year == end.year else 12
+                  for month in range(first_month, last_month + 1):
+                      print(f'Downloading EURUSD M1 {year}-{month:02d}...')
+                      download_hist_data(
+                          year=str(year), month=str(month), pair='eurusd',
+                          platform=Platform.GENERIC_ASCII,
+                          time_frame=TimeFrame.ONE_MINUTE,
+                          output_directory=str(target), verbose=True,
+                      )
+              else:
+                  # Future years are not valid for historical download.
+                  raise ValueError(f'End date {end} is in a future year.')
 
           zips = sorted(glob.glob('raw/**/*.zip', recursive=True))
           if not zips:
@@ -84,24 +105,39 @@ jobs:
                               names=['timestamp','open','high','low','close','volume']
                           ))
 
+          if not frames:
+              raise RuntimeError('Downloaded archives contained no CSV files.')
+
           df = pd.concat(frames, ignore_index=True)
-          df['timestamp'] = pd.to_datetime(df['timestamp'], format='%Y%m%d %H%M%S', errors='coerce')
-          for c in ['open','high','low','close','volume']:
+          df['timestamp'] = pd.to_datetime(
+              df['timestamp'], format='%Y%m%d %H%M%S', errors='coerce'
+          )
+          for c in ['open', 'high', 'low', 'close', 'volume']:
               df[c] = pd.to_numeric(df[c], errors='coerce')
-          df = df.dropna(subset=['timestamp','open','high','low','close'])
+
+          df = df.dropna(subset=['timestamp', 'open', 'high', 'low', 'close'])
           df = df.drop_duplicates('timestamp').sort_values('timestamp')
 
           start_ts = pd.Timestamp(start)
           end_ts = pd.Timestamp(end) + pd.Timedelta(days=1) - pd.Timedelta(minutes=1)
           df = df[(df['timestamp'] >= start_ts) & (df['timestamp'] <= end_ts)].copy()
+          if df.empty:
+              raise RuntimeError('No EURUSD M1 rows remain after date filtering.')
+
           df['volume'] = df['volume'].fillna(0).astype('int64')
 
-          one_min = df[['timestamp','open','high','low','close','volume']].copy()
+          one_min = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']].copy()
           five_min = (
               one_min.set_index('timestamp')
               .resample('5min', label='left', closed='left')
-              .agg({'open':'first','high':'max','low':'min','close':'last','volume':'sum'})
-              .dropna(subset=['open','high','low','close'])
+              .agg({
+                  'open': 'first',
+                  'high': 'max',
+                  'low': 'min',
+                  'close': 'last',
+                  'volume': 'sum',
+              })
+              .dropna(subset=['open', 'high', 'low', 'close'])
               .reset_index()
           )
           five_min['volume'] = five_min['volume'].astype('int64')
@@ -129,14 +165,20 @@ jobs:
           python - <<'PY'
           import pandas as pd
           from pathlib import Path
-          for p in [Path('data/eurusd/EURUSD_1m.parquet'), Path('data/eurusd/EURUSD_5m.parquet')]:
+          for p in [
+              Path('data/eurusd/EURUSD_1m.parquet'),
+              Path('data/eurusd/EURUSD_5m.parquet'),
+          ]:
               df = pd.read_parquet(p)
               assert not df.empty
               assert df['timestamp'].is_monotonic_increasing
               assert not df['timestamp'].duplicated().any()
               assert (df['high'] >= df[['open','close','low']].max(axis=1)).all()
               assert (df['low'] <= df[['open','close','high']].min(axis=1)).all()
-              print(f'{p}: {len(df):,} rows, {df.timestamp.min()} -> {df.timestamp.max()}')
+              print(
+                  f'{p}: {len(df):,} rows, '
+                  f'{df.timestamp.min()} -> {df.timestamp.max()}'
+              )
           PY
 
       - name: Commit data into repository
