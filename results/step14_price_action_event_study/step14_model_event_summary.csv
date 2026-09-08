@@ -1,0 +1,6 @@
+model,event_column,signals_with_event,signal_pct,total_event_bars,median_first_event_bar
+A_Breakout,breakout_A,162,100.0,8334,26.0
+B_Break_Retest,break_retest_B,158,97.53086419753086,6744,35.0
+C_Fibonacci_Rejection,fib_rejection_C,136,83.95061728395062,2475,129.5
+D_M1_Structure_Break,m1_structure_break_D,162,100.0,18412,5.0
+E_Momentum_Continuation,momentum_E,162,100.0,6535,21.0

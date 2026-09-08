@@ -1,0 +1,30 @@
+{
+  "purpose": "Price Action Event Study + Formal Entry Definitions",
+  "look_ahead_rule": "Event is known only at bar close; executable entry is NEXT_BAR_OPEN. No future bars are used to define the event.",
+  "models": {
+    "A_Breakout": "LONG: M1 close > prior 20-bar high. SHORT: M1 close < prior 20-bar low.",
+    "B_Break_Retest": "After A, within 10 bars, price retests the broken level within 0.25 ATR14 and closes directionally (bullish for LONG, bearish for SHORT).",
+    "C_Fibonacci_Rejection": "Price approaches/touches previous-swing 78.6/100/127.2/161.8/200% level within 0.25 ATR14 and closes away from the level in swing direction.",
+    "D_M1_Structure_Break": "Within prior 10 bars there is an opposite-direction candle; current close breaks the prior 3-bar high (LONG) or low (SHORT).",
+    "E_Momentum_Continuation": "Directional candle with body ratio >=0.60, range >=1.20 ATR14, and 3-minute return >=+0.50 pip (LONG) or <=-0.50 pip (SHORT)."
+  },
+  "parameters": {
+    "break_lookback": 20,
+    "retest_lookback": 10,
+    "retest_atr": 0.25,
+    "fib_atr": 0.25,
+    "structure_lookback": 3,
+    "structure_window": 10,
+    "momentum_body_ratio": 0.6,
+    "momentum_range_atr": 1.2,
+    "momentum_return_3m_pips": 0.5,
+    "fib_levels": [
+      78.6,
+      100,
+      127.2,
+      161.8,
+      200
+    ]
+  },
+  "next_step": "Step 15 backtests each model separately with entry at next-bar open; no parameter optimization in Step 14."
+}
