@@ -1,0 +1,11 @@
+{
+  "purpose": "Step 15 - Backtest Entry Models A-E",
+  "entry_rule": "Event known only at bar close; entry is NEXT_BAR_OPEN.",
+  "trade_selection": "First valid event per swing per model.",
+  "sl": "1.0 x ATR14 at event bar, fixed at entry.",
+  "tp": "1.5 x ATR14 at event bar, fixed at entry.",
+  "max_hold_bars": 120,
+  "intrabar_ambiguity": "If SL and TP are both touched in the same M1 candle, SL is assumed first (conservative).",
+  "optimization": false,
+  "costs": "Excluded; Step 17."
+}
