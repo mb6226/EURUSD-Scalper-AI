@@ -1,0 +1,22 @@
+{
+  "purpose": "Step 17 - Cost-aware backtest",
+  "source": "Step 15 trade-level CSVs",
+  "cost_model": "Fixed round-trip cost in pips = spread + 2 * per-side slippage; deducted from each trade using trade-specific ATR14 risk.",
+  "baseline_spread_pips": 0.8,
+  "baseline_slippage_per_side_pips": 0.1,
+  "baseline_roundtrip_cost_pips": 1.0,
+  "sensitivity_roundtrip_cost_pips": [
+    0.0,
+    0.5,
+    1.0,
+    1.5,
+    2.0,
+    2.5
+  ],
+  "price_data_limitation": "Historical OHLC has no bid/ask spread or observed execution slippage; costs are explicit research assumptions.",
+  "entry_rule": "Inherited from Step 15: event at bar close, entry at NEXT_BAR_OPEN.",
+  "sl_tp": "Inherited from Step 15: SL 1.0 x ATR14, TP 1.5 x ATR14, fixed at entry.",
+  "optimization": false,
+  "sharpe_definition": "Trade-level Sharpe = mean(net R) / std(net R) * sqrt(number of trades); not calendar-time annualized.",
+  "turnover_proxy": "Trades per year; notional turnover is not available because position sizing/notional is not specified."
+}
