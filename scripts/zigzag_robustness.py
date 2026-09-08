@@ -24,39 +24,21 @@ def inherited_region(path: Path) -> tuple[int, list[int], list[int]]:
 def build_candidates(step3_path: Path) -> pd.DataFrame:
     center, inherited_devs, inherited_backsteps = inherited_region(step3_path)
     depths = list(range(center - 50, center + 51, 5))
-
-    # Preserve the Step 3 deviation range and add immediate boundary probes.
-    dmin, dmax = min(inherited_devs), max(inherited_devs)
-    deviations = sorted(set(inherited_devs + [max(5, dmin - 25), dmax + 25]))
-
-    # Preserve the Step 3 backsteps and probe one wider/lower neighboring value.
-    bmin, bmax = min(inherited_backsteps), max(inherited_backsteps)
-    backsteps = sorted(set(inherited_backsteps + [max(5, bmin - 20), bmax + 20]))
-
-    rows = [
-        (depth, deviation, backstep)
-        for depth in depths
-        for deviation in deviations
-        for backstep in backsteps
-    ]
+    # Step 3 showed the deviation range itself is stable; keep that range intact.
+    deviations = inherited_devs
+    # Probe one neighboring backstep beyond the Step 3 stable pair without exploding the grid.
+    bmax = max(inherited_backsteps)
+    backsteps = sorted(set(inherited_backsteps + [bmax + 20]))
+    rows = [(depth, deviation, backstep)
+            for depth in depths for deviation in deviations for backstep in backsteps]
     return pd.DataFrame(rows, columns=["depth", "deviation", "backstep"])
 
 
 def score(row: pd.Series, baseline: pd.Series) -> float:
-    # Robustness score rewards retention of the structural characteristics seen
-    # in Step 3, rather than simply selecting the single highest-efficiency cell.
-    swing_ratio = min(row.median_swing_pips, baseline.median_swing_pips) / max(
-        row.median_swing_pips, baseline.median_swing_pips
-    )
-    bars_ratio = min(row.median_bars, baseline.median_bars) / max(
-        row.median_bars, baseline.median_bars
-    )
-    eff_ratio = min(row.median_efficiency, baseline.median_efficiency) / max(
-        row.median_efficiency, baseline.median_efficiency
-    )
-    pivot_ratio = min(row.pivot_count, baseline.pivot_count) / max(
-        row.pivot_count, baseline.pivot_count
-    )
+    swing_ratio = min(row.median_swing_pips, baseline.median_swing_pips) / max(row.median_swing_pips, baseline.median_swing_pips)
+    bars_ratio = min(row.median_bars, baseline.median_bars) / max(row.median_bars, baseline.median_bars)
+    eff_ratio = min(row.median_efficiency, baseline.median_efficiency) / max(row.median_efficiency, baseline.median_efficiency)
+    pivot_ratio = min(row.pivot_count, baseline.pivot_count) / max(row.pivot_count, baseline.pivot_count)
     return float(0.30 * eff_ratio + 0.25 * swing_ratio + 0.20 * bars_ratio + 0.25 * pivot_ratio)
 
 
@@ -68,13 +50,11 @@ def main() -> None:
     ap.add_argument("--point", type=float, default=1e-5)
     args = ap.parse_args()
 
-    out = Path(args.output_dir)
-    out.mkdir(parents=True, exist_ok=True)
+    out = Path(args.output_dir); out.mkdir(parents=True, exist_ok=True)
     d = pd.read_parquet(args.input).sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
     candidates = build_candidates(Path(args.step3))
     candidates.to_csv(out / "robustness_candidates.csv", index=False)
 
-    # Baseline is the median parameter tuple inherited from Step 3's stable region.
     step3 = pd.read_csv(args.step3).head(20)
     baseline_cfg = {
         "depth": int(round(float(step3.depth.median()) / 5.0) * 5),
@@ -82,9 +62,7 @@ def main() -> None:
         "backstep": int(round(float(step3.backstep.median()) / 20.0) * 20),
     }
     n = len(d)
-    baseline = pd.Series(metrics_for_period(
-        d, 0, n, baseline_cfg["depth"], baseline_cfg["deviation"], baseline_cfg["backstep"], args.point
-    ))
+    baseline = pd.Series(metrics_for_period(d, 0, n, baseline_cfg["depth"], baseline_cfg["deviation"], baseline_cfg["backstep"], args.point))
 
     rows = []
     for r in candidates.itertuples(index=False):
@@ -102,41 +80,32 @@ def main() -> None:
     result.to_csv(out / "robustness_all_results.csv", index=False)
     result.head(50).to_csv(out / "robustness_top50.csv", index=False)
 
-    # Marginal sensitivity: median score/metrics at each parameter value.
     for col in ["depth", "deviation", "backstep"]:
         marginal = result.groupby(col, as_index=False).agg(
-            configs=("robustness_score", "count"),
-            median_score=("robustness_score", "median"),
-            min_score=("robustness_score", "min"),
-            median_efficiency=("median_efficiency", "median"),
-            median_swing_pips=("median_swing_pips", "median"),
-            median_bars=("median_bars", "median"),
+            configs=("robustness_score", "count"), median_score=("robustness_score", "median"),
+            min_score=("robustness_score", "min"), median_efficiency=("median_efficiency", "median"),
+            median_swing_pips=("median_swing_pips", "median"), median_bars=("median_bars", "median"),
             median_pivots=("pivot_count", "median"),
         )
         marginal.to_csv(out / f"sensitivity_{col}.csv", index=False)
 
-    # Identify a plateau: parameter values whose marginal median score retains at
-    # least 99% of the best marginal score. This is descriptive, not a final setting.
     plateau = []
     for col in ["depth", "deviation", "backstep"]:
         m = pd.read_csv(out / f"sensitivity_{col}.csv")
         threshold = float(m.median_score.max()) * 0.99
         keep = m[m.median_score >= threshold].copy()
-        keep.insert(0, "parameter", col)
-        keep["threshold"] = threshold
+        keep.insert(0, "parameter", col); keep["threshold"] = threshold
         plateau.append(keep)
     pd.concat(plateau, ignore_index=True).to_csv(out / "robust_parameter_plateau.csv", index=False)
 
     (out / "README.md").write_text(
         "# EURUSD M1 ZigZag Step 4 — Robustness / Sensitivity\n\n"
-        f"Candidates are inherited from Step 3: `{args.step3}`.\n\n"
-        f"Baseline region center: depth={baseline_cfg['depth']}, deviation={baseline_cfg['deviation']}, backstep={baseline_cfg['backstep']}.\n"
+        f"Candidates are inherited from Step 3: `{args.step3}`.\n"
+        f"Baseline center: depth={baseline_cfg['depth']}, deviation={baseline_cfg['deviation']}, backstep={baseline_cfg['backstep']}.\n"
         "Depth is probed every 5 bars across +/-50 bars around the Step 3 center.\n"
-        "Deviation and backstep preserve the Step 3 ranges and add immediate neighboring probes.\n\n"
+        "Deviation preserves the full Step 3 range; backstep preserves Step 3 values and adds the next neighboring value.\n"
         "The robustness score measures retention of efficiency, swing size, swing duration, and pivot density versus the inherited baseline.\n"
-        "The plateau output is descriptive and must not be treated as a final trading parameter.\n",
-        encoding="utf-8",
-    )
+        "Plateau output is descriptive and is not a final trading parameter.\n", encoding="utf-8")
     print(f"Candidates: {len(candidates)}")
     print(result.head(20).to_string(index=False))
     print("\nBaseline:", baseline_cfg)
