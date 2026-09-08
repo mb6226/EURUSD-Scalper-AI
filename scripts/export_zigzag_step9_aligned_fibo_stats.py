@@ -23,9 +23,10 @@ merged = merged.dropna(subset=["current_end_retracement_pct"]).copy()
 merged["reversal_pct"] = merged["current_end_retracement_pct"]
 
 # Explicit unbounded reversal zones: do not cap at 100%.
-bins = [-float("inf"), 23.6, 38.2, 50.0, 61.8, 78.6, 100.0, 127.2, 161.8, 200.0, 261.8, 361.8, 423.6, float("inf")]
+# There are 14 labels and therefore 15 edges for 14 intervals.
+bins = [-float("inf"), 0.0, 23.6, 38.2, 50.0, 61.8, 78.6, 100.0, 127.2, 161.8, 200.0, 261.8, 361.8, 423.6, float("inf")]
 labels = ["<0", "0-23.6", "23.6-38.2", "38.2-50", "50-61.8", "61.8-78.6", "78.6-100", "100-127.2", "127.2-161.8", "161.8-200", "200-261.8", "261.8-361.8", "361.8-423.6", ">=423.6"]
-merged["reversal_fib_zone"] = pd.cut(merged["reversal_pct"], bins=bins, labels=labels, right=False)
+merged["reversal_fib_zone"] = pd.cut(merged["reversal_pct"], bins=bins, labels=labels, right=False, include_lowest=True)
 
 summary_rows = []
 for group_name, g in [("ALL", merged), ("UP", merged[merged.direction == "UP"]), ("DOWN", merged[merged.direction == "DOWN"])]:
@@ -53,17 +54,18 @@ for group_name, g in [("ALL", merged), ("UP", merged[merged.direction == "UP"]),
 summary = pd.DataFrame(summary_rows)
 summary.to_csv(OUT / "aligned_fibo_summary.csv", index=False)
 
-zone = (merged.groupby("reversal_fib_zone", observed=False).size().rename("count").reset_index())
+zone = merged.groupby("reversal_fib_zone", observed=False).size().rename("count").reset_index()
 zone["pct"] = zone["count"] / len(merged)
 zone.to_csv(OUT / "aligned_fibo_zone_distribution.csv", index=False)
 
-by_direction = (merged.groupby(["direction", "reversal_fib_zone"], observed=False).size().rename("count").reset_index())
+by_direction = merged.groupby(["direction", "reversal_fib_zone"], observed=False).size().rename("count").reset_index()
 by_direction["direction_total"] = by_direction.groupby("direction")["count"].transform("sum")
 by_direction["pct_within_direction"] = by_direction["count"] / by_direction["direction_total"]
 by_direction.to_csv(OUT / "aligned_fibo_direction_zone.csv", index=False)
 
-by_trend = (merged.groupby(["trend", "reversal_fib_zone"], observed=False).size().rename("count").reset_index())
+by_trend = merged.groupby(["trend", "reversal_fib_zone"], observed=False).size().rename("count").reset_index()
 by_trend["trend_total"] = by_trend.groupby("trend")["count"].transform("sum")
+by_trend["pct_within_trend"] = by_trend["count"] / by_trend["trend_total"]
 by_trend["pct_within_trend"] = by_trend["count"] / by_trend["trend_total"]
 by_trend.to_csv(OUT / "aligned_fibo_trend_zone.csv", index=False)
 
