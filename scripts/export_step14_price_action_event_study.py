@@ -13,7 +13,6 @@ OUT = ROOT / "results/step14_price_action_event_study"
 OUT.mkdir(parents=True, exist_ok=True)
 PIP = 0.0001
 
-# Fixed ex-ante definitions. These are deliberately not optimized on the 162 signals.
 BREAK_LOOKBACK = 20
 RETEST_LOOKBACK = 10
 RETEST_ATR_MULT = 0.25
@@ -35,8 +34,7 @@ def load_price() -> pd.DataFrame:
     x["timestamp"] = pd.to_datetime(x["timestamp"], errors="coerce")
     for c in ["open", "high", "low", "close"]:
         x[c] = pd.to_numeric(x[c], errors="coerce")
-    x = x.dropna(subset=["timestamp", "open", "high", "low", "close"]).sort_values("timestamp")
-    return x.reset_index(drop=True)
+    return x.dropna(subset=["timestamp", "open", "high", "low", "close"]).sort_values("timestamp").reset_index(drop=True)
 
 
 def load_selected() -> pd.DataFrame:
@@ -45,8 +43,8 @@ def load_selected() -> pd.DataFrame:
     req = {"swing_id", "direction", "trend", "swing_pips", "bars", "prior_direction", "prior_swing_pips"}
     if (m := req - set(sel.columns)):
         raise ValueError(f"Step 12 signal list missing columns: {sorted(m)}")
+    # Step 12 is canonical for signal metadata. Step 7 supplies only coordinates.
     cols = ["swing_id", "start_bar", "end_bar", "start_time", "end_time", "start_price", "end_price",
-            "direction", "swing_pips", "bars", "prior_direction", "prior_swing_pips",
             "prior_start_price", "prior_end_price"]
     if (m := set(cols) - set(step7.columns)):
         raise ValueError(f"Step 7 data missing columns: {sorted(m)}")
@@ -65,7 +63,7 @@ def features(seg: pd.DataFrame) -> pd.DataFrame:
     tr = pd.concat([x.high-x.low, (x.high-x.close.shift()).abs(), (x.low-x.close.shift()).abs()], axis=1).max(axis=1)
     x["atr14_pips"] = tr.rolling(14, min_periods=14).mean() / PIP
     x["range_vs_atr14"] = x.range_pips / x.atr14_pips.replace(0, np.nan)
-    for n in [3, 5, 20]:
+    for n in [3, 20]:
         x[f"prior_{n}_high"] = x.high.shift(1).rolling(n, min_periods=n).max()
         x[f"prior_{n}_low"] = x.low.shift(1).rolling(n, min_periods=n).min()
     x["strong_bullish"] = (x.body_ratio >= MOM_BODY_RATIO) & (x.close_location >= 0.70)
@@ -76,9 +74,8 @@ def features(seg: pd.DataFrame) -> pd.DataFrame:
 def formal_events(seg: pd.DataFrame, direction: str, prior_direction: str, prior_start: float, prior_end: float) -> pd.DataFrame:
     x = features(seg)
     up = direction == "UP"
-    # A: close breaks the immediately preceding 20-bar structure in swing direction.
+
     x["breakout_A"] = (x.close > x.prior_20_high) if up else (x.close < x.prior_20_low)
-    # B: breakout level is retested within 10 bars and rejected in swing direction.
     x["breakout_level"] = np.nan
     x.loc[x["breakout_A"], "breakout_level"] = x.loc[x["breakout_A"], "prior_20_high" if up else "prior_20_low"]
     last_level = np.nan
@@ -95,14 +92,13 @@ def formal_events(seg: pd.DataFrame, direction: str, prior_direction: str, prior
     x["bars_since_breakout"] = [v[1] for v in vals]
     tol = RETEST_ATR_MULT * x["atr14_pips"] * PIP
     if up:
-        touched = x["low"].le(x["last_breakout_level"] + tol) & x["high"].ge(x["last_breakout_level"] - tol)
+        touched = x.low.le(x.last_breakout_level + tol) & x.high.ge(x.last_breakout_level - tol)
         rejected = x.close > x.open
     else:
-        touched = x["high"].ge(x["last_breakout_level"] - tol) & x["low"].le(x["last_breakout_level"] + tol)
+        touched = x.high.ge(x.last_breakout_level - tol) & x.low.le(x.last_breakout_level + tol)
         rejected = x.close < x.open
-    x["break_retest_B"] = touched & rejected & x["bars_since_breakout"].between(1, RETEST_LOOKBACK)
+    x["break_retest_B"] = touched & rejected & x.bars_since_breakout.between(1, RETEST_LOOKBACK)
 
-    # C: touch one of the previous-swing Fib levels within 0.25 ATR and reject.
     prior_range = abs(prior_end - prior_start)
     fib_mask = np.zeros(len(x), dtype=bool)
     fib_label = np.array([""] * len(x), dtype=object)
@@ -122,7 +118,6 @@ def formal_events(seg: pd.DataFrame, direction: str, prior_direction: str, prior
     x["fib_rejection_C"] = fib_mask
     x["fib_rejection_level_C"] = fib_label
 
-    # D: M1 structure break after an opposite-candle pullback within the prior 10 bars.
     if up:
         opposite = x.close < x.open
         structure_break = x.close > x.prior_3_high
@@ -132,7 +127,6 @@ def formal_events(seg: pd.DataFrame, direction: str, prior_direction: str, prior
     opp_recent = opposite.shift(1).rolling(STRUCTURE_WINDOW, min_periods=1).max().astype(bool)
     x["m1_structure_break_D"] = structure_break & opp_recent
 
-    # E: momentum continuation = strong directional candle + >=1.2 ATR range + positive 3m impulse.
     if up:
         x["momentum_E"] = x.strong_bullish & (x.range_vs_atr14 >= MOM_RANGE_ATR) & (x.return_3m_pips >= MOM_RETURN_3M)
     else:
@@ -147,6 +141,7 @@ def build() -> None:
     price = load_price()
     selected = load_selected().sort_values("swing_id")
     all_events, signal_rows, overlap_rows = [], [], []
+    event_names = ["breakout_A", "break_retest_B", "fib_rejection_C", "m1_structure_break_D", "momentum_E"]
 
     for _, s in selected.iterrows():
         start, end = int(s.start_bar), int(s.end_bar)
@@ -154,7 +149,6 @@ def build() -> None:
             raise ValueError(f"Invalid swing range {s.swing_id}: {start}-{end}")
         seg = formal_events(price.iloc[start:end+1], s.direction, s.prior_direction,
                             float(s.prior_start_price), float(s.prior_end_price))
-        event_names = ["breakout_A", "break_retest_B", "fib_rejection_C", "m1_structure_break_D", "momentum_E"]
         counts = {n: int(seg[n].sum()) for n in event_names}
         firsts = {}
         for n in event_names:
@@ -172,11 +166,13 @@ def build() -> None:
                     "fib_rejection_level_C": r.fib_rejection_level_C if n == "fib_rejection_C" else "",
                     "entry_reference": "NEXT_BAR_OPEN",
                 })
-        signal_rows.append({"swing_id": int(s.swing_id), "direction": s.direction, "swing_pips": float(s.swing_pips), "bars": len(seg),
-                            **{f"{n}_count": counts[n] for n in event_names},
-                            **{f"first_{n}_bar": firsts[n] for n in event_names},
-                            "any_formal_event": any(counts.values()),
-                            "distinct_models_present": sum(c > 0 for c in counts.values())})
+        signal_rows.append({
+            "swing_id": int(s.swing_id), "direction": s.direction, "swing_pips": float(s.swing_pips), "bars": len(seg),
+            **{f"{n}_count": counts[n] for n in event_names},
+            **{f"first_{n}_bar": firsts[n] for n in event_names},
+            "any_formal_event": any(counts.values()),
+            "distinct_models_present": sum(c > 0 for c in counts.values()),
+        })
         for a in event_names:
             for b in event_names:
                 if a < b:
@@ -191,7 +187,12 @@ def build() -> None:
     overlap.to_csv(OUT / "step14_event_overlap.csv", index=False)
 
     model_rows = []
-    for n, label in [("breakout_A","A_Breakout"),("break_retest_B","B_Break_Retest"),("fib_rejection_C","C_Fibonacci_Rejection"),("m1_structure_break_D","D_M1_Structure_Break"),("momentum_E","E_Momentum_Continuation")]:
+    labels = {
+        "breakout_A":"A_Breakout", "break_retest_B":"B_Break_Retest",
+        "fib_rejection_C":"C_Fibonacci_Rejection", "m1_structure_break_D":"D_M1_Structure_Break",
+        "momentum_E":"E_Momentum_Continuation"
+    }
+    for n, label in labels.items():
         c = int(signals[f"{n}_count"].gt(0).sum())
         bars = int(signals[f"{n}_count"].sum())
         first = signals.loc[signals[f"{n}_count"].gt(0), f"first_{n}_bar"]
