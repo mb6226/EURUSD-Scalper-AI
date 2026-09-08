@@ -20,6 +20,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; EURUSD-Scalper-AI/1.0; resear
 MAX_RETRIES = 4
 BACKOFF_SECONDS = (5, 15, 30, 60)
 TIME_RE = re.compile(r"^(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<ampm>am|pm)$", re.I)
+TIME_TOKEN_RE = re.compile(r"(?<!\d)(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<ampm>am|pm)(?![A-Za-z])", re.I)
 DATE_RE = re.compile(r"^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(?P<month>[A-Z][a-z]{2})\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?$", re.I)
 
 
@@ -94,11 +95,15 @@ def extract_page_timezone(soup: BeautifulSoup) -> tuple[str, ZoneInfo]:
 
 
 def _find_cell(tr, field: str):
-    exact = tr.select_one(f"td.calendar__cell.calendar__{field}.{field}")
-    if exact is not None: return exact
+    # Forex Factory has rendered calendar fields as both <td> cells and
+    # nested elements across historical/current layouts. Prefer the semantic
+    # field class anywhere in the row; fall back to an exact class-token scan.
+    for selector in (f".calendar__cell.calendar__{field}.{field}", f".calendar__{field}.{field}"):
+        exact = tr.select_one(selector)
+        if exact is not None: return exact
     wanted = f"calendar__{field}"
-    for td in tr.find_all("td", recursive=False):
-        if wanted in _class_tokens(td): return td
+    for node in tr.find_all(True):
+        if wanted in _class_tokens(node): return node
     return None
 
 
@@ -140,25 +145,33 @@ def impact_label(cell) -> str:
 
 
 def _canonical_time_text(time_cell) -> str | None:
-    """Read only an exact HH:MM am/pm token from the canonical time cell.
+    """Extract exactly one release-time token from the canonical time field.
 
-    Forex Factory currently renders the release time as plain text in the
-    canonical cell; some historical/reference rows in the same cell contain
-    strings such as "Sep Data". Those are not release times and are rejected.
+    The field may contain plain text such as ``8:30am`` or nested markup.
+    Non-release text such as ``Sep Data`` / ``Nov 15th`` is ignored. If the
+    same canonical field exposes two different exact times, fail closed.
     """
     if time_cell is None: return None
-    candidates = []
+    candidates: list[str] = []
+
+    def collect(value) -> None:
+        if not value: return
+        text = " ".join(str(value).split())
+        for match in TIME_TOKEN_RE.finditer(text):
+            candidates.append(match.group(0))
+
     for node in [time_cell, *time_cell.find_all(True)]:
         for attr in ("datetime", "data-time", "data-event-time"):
-            value = node.get(attr)
-            if value:
-                value = " ".join(str(value).split())
-                if TIME_RE.fullmatch(value): candidates.append(value)
-        text = " ".join(node.get_text(" ", strip=True).split())
-        if TIME_RE.fullmatch(text): candidates.append(text)
-    unique = {f"{int(TIME_RE.fullmatch(v).group('hour'))}:{TIME_RE.fullmatch(v).group('minute') or '00'}{TIME_RE.fullmatch(v).group('ampm').lower()}" for v in candidates}
-    if len(unique) == 1: return next(iter(unique))
-    if len(unique) > 1: raise RuntimeError("Canonical Forex Factory time cell contains conflicting exact release times")
+            collect(node.get(attr))
+        collect(node.get_text(" ", strip=True))
+
+    normalized = set()
+    for value in candidates:
+        match = TIME_TOKEN_RE.fullmatch(" ".join(value.split()))
+        if match is None: continue
+        normalized.add(f"{int(match.group('hour'))}:{match.group('minute') or '00'}{match.group('ampm').lower()}")
+    if len(normalized) == 1: return next(iter(normalized))
+    if len(normalized) > 1: raise RuntimeError("Canonical Forex Factory time cell contains conflicting exact release times")
     return None
 
 
@@ -248,8 +261,6 @@ def main() -> None:
     if not df["release_time"].is_monotonic_increasing: raise RuntimeError("Economic calendar release_time is not monotonic after normalization")
     OUT.parent.mkdir(parents=True, exist_ok=True); tmp_out = OUT.with_suffix(".tmp"); df.to_csv(tmp_out, index=False); tmp_out.replace(OUT)
     pd.DataFrame([{"price_start": start.isoformat(), "price_end": end.isoformat(), "requested_weeks": requested_weeks, "successful_weeks": requested_weeks, "failed_weeks": 0, "skipped_untimed_rows": skipped_untimed_total, "event_count": len(df), "timezone_count": df["source_timezone"].nunique()}]).to_csv(FETCH_STATS, index=False)
-    print(f"Saved {len(df)} exact-time EUR/USD events to {OUT}")
-    print(f"Weeks: {requested_weeks} successful, 0 failed; skipped {skipped_untimed_total} untimed/non-release rows")
 
 
 if __name__ == "__main__": main()
