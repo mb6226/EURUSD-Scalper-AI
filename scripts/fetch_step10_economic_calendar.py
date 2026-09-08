@@ -14,7 +14,6 @@ PRICE = ROOT / "data/eurusd/EURUSD_1m.csv"
 OUT = ROOT / "data/economic/economic_calendar.csv"
 LONDON = ZoneInfo("Europe/London")
 UTC = ZoneInfo("UTC")
-
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; EURUSD-Scalper-AI/1.0; research)"}
 
 
@@ -53,11 +52,7 @@ def compute_bias(currency: str, event: str, actual: str, forecast: str) -> int:
     if a is None or f is None or a == f:
         return 0
     good_for_currency = (a > f) if higher_is_better(event) else (a < f)
-    if not good_for_currency:
-        currency_sign = -1
-    else:
-        currency_sign = 1
-    # EUR strength => EURUSD bullish; USD strength => EURUSD bearish.
+    currency_sign = 1 if good_for_currency else -1
     return currency_sign if currency == "EUR" else -currency_sign
 
 
@@ -71,6 +66,22 @@ def price_range() -> tuple[date, date]:
 
 def week_key(day: date) -> str:
     return f"{day.strftime('%b').lower()}{day.day}.{day.year}"
+
+
+def resolve_calendar_date(text: str, week_day: date) -> date | None:
+    m = re.search(r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+([A-Z][a-z]{2})\s+(\d{1,2})", text)
+    if not m:
+        return None
+    month_num = datetime.strptime(m.group(1), "%b").month
+    year = week_day.year
+    if week_day.month == 12 and month_num == 1:
+        year += 1
+    elif week_day.month == 1 and month_num == 12:
+        year -= 1
+    try:
+        return date(year, month_num, int(m.group(2)))
+    except ValueError:
+        return None
 
 
 def scrape_week(day: date) -> list[dict]:
@@ -91,10 +102,7 @@ def scrape_week(day: date) -> list[dict]:
         date_cell = cell("date")
         time_cell = cell("time")
         if date_cell and date_cell.get_text(strip=True):
-            text = date_cell.get_text(" ", strip=True)
-            m = re.search(r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+([A-Z][a-z]{2})\s+(\d{1,2})", text)
-            if m:
-                current_date = date(day.year, datetime.strptime(m.group(1), "%b").month, int(m.group(2)))
+            current_date = resolve_calendar_date(date_cell.get_text(" ", strip=True), day)
 
         currency_cell = cell("currency")
         impact_cell = cell("impact")
@@ -108,16 +116,14 @@ def scrape_week(day: date) -> list[dict]:
         currency = currency_cell.get_text(strip=True).upper()
         if currency not in {"EUR", "USD"}:
             continue
-        impact = impact_cell.get_text(strip=True).upper() if impact_cell else ""
-        if "HIGH" in impact:
+        impact_text = impact_cell.get_text(strip=True).upper() if impact_cell else ""
+        if "HIGH" in impact_text:
             impact = "HIGH"
-        elif "MED" in impact:
+        elif "MED" in impact_text:
             impact = "MEDIUM"
-        elif "LOW" in impact:
+        elif "LOW" in impact_text:
             impact = "LOW"
         else:
-            impact = "NONE"
-        if impact == "NONE":
             continue
 
         event = event_cell.get_text(" ", strip=True)
@@ -131,14 +137,12 @@ def scrape_week(day: date) -> list[dict]:
             local_dt = datetime.strptime(f"{current_date} {time_text}", "%Y-%m-%d %I:%M%p").replace(tzinfo=LONDON)
         except ValueError:
             continue
-        release_time = local_dt.astimezone(UTC).isoformat()
-        bias = compute_bias(currency, event, actual, forecast)
         rows.append({
-            "release_time": release_time,
+            "release_time": local_dt.astimezone(UTC).isoformat(),
             "currency": currency,
             "impact": impact,
             "event": event,
-            "bias": bias,
+            "bias": compute_bias(currency, event, actual, forecast),
             "actual": actual,
             "forecast": forecast,
             "previous": previous,
@@ -155,9 +159,10 @@ def main() -> None:
         rows.extend(scrape_week(cursor))
         cursor += timedelta(days=7)
 
-    df = pd.DataFrame(rows).drop_duplicates(subset=["release_time", "currency", "event"])
+    df = pd.DataFrame(rows)
     if df.empty:
         raise RuntimeError("No EUR/USD economic events were downloaded")
+    df = df.drop_duplicates(subset=["release_time", "currency", "event"])
     df["release_time"] = pd.to_datetime(df["release_time"], utc=True)
     df = df.sort_values("release_time")
     df.to_csv(OUT, index=False)
