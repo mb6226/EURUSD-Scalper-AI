@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import re
 import time
 
@@ -15,7 +15,6 @@ PRICE = ROOT / "data/eurusd/EURUSD_1m.csv"
 OUT = ROOT / "data/economic/economic_calendar.csv"
 FAILURES = ROOT / "results/step10_economic/calendar_fetch_failures.csv"
 FETCH_STATS = ROOT / "results/step10_economic/calendar_fetch_stats.csv"
-LONDON = ZoneInfo("Europe/London")
 UTC = ZoneInfo("UTC")
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; EURUSD-Scalper-AI/1.0; research)"}
 MAX_RETRIES = 4
@@ -89,6 +88,90 @@ def resolve_calendar_date(text: str, week_day: date) -> date | None:
         return None
 
 
+def extract_page_timezone(soup: BeautifulSoup) -> tuple[str, ZoneInfo]:
+    """Read the timezone advertised by the fetched Forex Factory page.
+
+    We intentionally do not hard-code a source timezone. The event's displayed
+    local clock is only meaningful together with the timezone selected by the
+    source/page context. If the page does not expose a usable IANA timezone,
+    fail closed rather than manufacturing a UTC timestamp.
+    """
+    text = soup.get_text(" ", strip=True)
+    patterns = (
+        r"Calendar\s+Time\s+Zone\s*:\s*([A-Za-z_]+(?:/[A-Za-z0-9_+\-]+)+)",
+        r"Time\s+Zone\s*:\s*([A-Za-z_]+(?:/[A-Za-z0-9_+\-]+)+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        name = match.group(1)
+        try:
+            return name, ZoneInfo(name)
+        except ZoneInfoNotFoundError:
+            raise RuntimeError(f"Forex Factory advertised unknown IANA timezone: {name}")
+    raise RuntimeError("Forex Factory page did not expose a usable IANA calendar timezone")
+
+
+def _class_tokens(tag) -> set[str]:
+    if tag is None:
+        return set()
+    classes = tag.get("class", [])
+    if isinstance(classes, str):
+        classes = classes.split()
+    return {str(x) for x in classes}
+
+
+def _find_cell(tr, field: str):
+    """Prefer Forex Factory's canonical field selector, then exact class token."""
+    selector = f"td.calendar__cell.calendar__{field}.{field}"
+    exact = tr.select_one(selector)
+    if exact is not None:
+        return exact
+    wanted = f"calendar__{field}"
+    for td in tr.find_all("td", recursive=False):
+        classes = _class_tokens(td)
+        if wanted in classes:
+            return td
+    return None
+
+
+def _row_is_calendar(tr) -> bool:
+    classes = _class_tokens(tr)
+    return not classes or any("calendar__row" in c or "calendar_row" in c for c in classes)
+
+
+def _numeric_timestamp(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        number = float(str(value).strip())
+    except ValueError:
+        return None
+    # Forex Factory integrations commonly expose Unix timestamps in either
+    # seconds or milliseconds. Normalize both to an aware UTC datetime.
+    if number > 10_000_000_000:
+        number /= 1000.0
+    if number < 1_000_000_000 or number > 4_500_000_000:
+        return None
+    return datetime.fromtimestamp(number, tz=timezone.utc)
+
+
+def row_source_timestamp(tr) -> datetime | None:
+    """Use an explicit source timestamp when the HTML exposes one."""
+    attrs = (
+        "data-timestamp", "data-event-timestamp", "data-time",
+        "data-utc-timestamp", "data-release-timestamp",
+    )
+    nodes = [tr, *tr.find_all(True)]
+    for node in nodes:
+        for attr in attrs:
+            timestamp = _numeric_timestamp(node.get(attr))
+            if timestamp is not None:
+                return timestamp
+    return None
+
+
 def impact_label(cell) -> str:
     if cell is None:
         return ""
@@ -113,29 +196,12 @@ def impact_label(cell) -> str:
     return ""
 
 
-def _class_tokens(tag) -> set[str]:
-    if tag is None:
-        return set()
-    classes = tag.get("class", [])
-    if isinstance(classes, str):
-        classes = classes.split()
-    return {str(x) for x in classes}
-
-
-def _find_cell(tr, field: str):
-    # Forex Factory has changed the exact combination of calendar cell classes
-    # over time. Match any td whose class tokens contain the semantic field name.
-    wanted = f"calendar__{field}"
-    for td in tr.find_all("td", recursive=False):
-        classes = _class_tokens(td)
-        if wanted in classes or any(wanted in c for c in classes):
-            return td
-    return None
-
-
-def _row_is_calendar(tr) -> bool:
-    classes = _class_tokens(tr)
-    return not classes or any("calendar__row" in c or "calendar_row" in c for c in classes)
+def parse_local_event_datetime(current_date: date, time_text: str, source_tz: ZoneInfo) -> datetime:
+    normalized = time_text.strip()
+    if not normalized or "day" in normalized.lower() or "all day" in normalized.lower() or "tentative" in normalized.lower():
+        normalized = "12:00am"
+    naive = datetime.strptime(f"{current_date} {normalized}", "%Y-%m-%d %I:%M%p")
+    return naive.replace(tzinfo=source_tz)
 
 
 def scrape_week(day: date, session: requests.Session) -> list[dict]:
@@ -149,6 +215,7 @@ def scrape_week(day: date, session: requests.Session) -> list[dict]:
             table = soup.find("table", class_=lambda value: value and "calendar__table" in value)
             if table is None:
                 raise RuntimeError(f"Calendar table not found: {url}")
+            source_timezone_name, source_tz = extract_page_timezone(soup)
 
             rows = []
             current_date = None
@@ -179,21 +246,26 @@ def scrape_week(day: date, session: requests.Session) -> list[dict]:
                 actual_cell = _find_cell(tr, "actual")
                 forecast_cell = _find_cell(tr, "forecast")
                 previous_cell = _find_cell(tr, "previous")
-
                 impact = impact_label(impact_cell) or "LOW"
                 event = event_cell.get_text(" ", strip=True)
                 actual = actual_cell.get_text(" ", strip=True) if actual_cell else ""
                 forecast = forecast_cell.get_text(" ", strip=True) if forecast_cell else ""
                 previous = previous_cell.get_text(" ", strip=True) if previous_cell else ""
                 time_text = time_cell.get_text(" ", strip=True) if time_cell else "12:00am"
-                if "day" in time_text.lower() or "all day" in time_text.lower() or "tentative" in time_text.lower():
-                    time_text = "12:00am"
-                try:
-                    local_dt = datetime.strptime(f"{current_date} {time_text}", "%Y-%m-%d %I:%M%p").replace(tzinfo=LONDON)
-                except ValueError:
-                    continue
+
+                source_dt = row_source_timestamp(tr)
+                if source_dt is None:
+                    source_dt = parse_local_event_datetime(current_date, time_text, source_tz)
+                    release_utc = source_dt.astimezone(UTC)
+                else:
+                    release_utc = source_dt.astimezone(UTC)
+                    source_dt = release_utc.astimezone(source_tz)
+
                 rows.append({
-                    "release_time": local_dt.astimezone(UTC).isoformat(),
+                    "release_time": release_utc.isoformat(),
+                    "source_timezone": source_timezone_name,
+                    "source_date": source_dt.date().isoformat(),
+                    "source_local_time": source_dt.strftime("%H:%M:%S"),
                     "currency": currency,
                     "impact": impact,
                     "event": event,
@@ -245,6 +317,11 @@ def main() -> None:
     df["release_time"] = pd.to_datetime(df["release_time"], utc=True)
     df = df.sort_values("release_time")
 
+    if df["source_timezone"].isna().any() or df["source_timezone"].eq("").any():
+        raise RuntimeError("One or more events have no source timezone provenance")
+    if not df["release_time"].is_monotonic_increasing:
+        raise RuntimeError("Economic calendar release_time is not monotonic after normalization")
+
     OUT.parent.mkdir(parents=True, exist_ok=True)
     FAILURES.parent.mkdir(parents=True, exist_ok=True)
     FETCH_STATS.parent.mkdir(parents=True, exist_ok=True)
@@ -260,6 +337,7 @@ def main() -> None:
         "successful_weeks": requested_weeks - len(failures),
         "failed_weeks": len(failures),
         "event_count": len(df),
+        "timezone_count": df["source_timezone"].nunique(),
     }]).to_csv(FETCH_STATS, index=False)
 
     print(f"Saved {len(df)} EUR/USD events to {OUT}")
