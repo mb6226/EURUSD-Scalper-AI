@@ -85,7 +85,6 @@ def main() -> None:
     events = load_events()
     trading_days = load_trading_days()
     seed = load_seed()
-
     if not trading_days:
         raise ValueError("EURUSD price file contains no valid timestamps")
 
@@ -99,10 +98,22 @@ def main() -> None:
     daily_rows: list[dict] = []
     event_rows: list[dict] = []
     monthly_rows: list[dict] = []
-    month_start = None
+    month_days = 0
     month_event_count = 0
     month_high_count = 0
     month_changes = 0
+
+    def close_month(month_key: str) -> None:
+        monthly_rows.append({
+            "month": month_key,
+            "opening_regime": opening_regime,
+            "final_regime": previous_month_final,
+            "days": month_days,
+            "regime_changes": month_changes,
+            "total_event_count": month_event_count,
+            "high_impact_event_count": month_high_count,
+            "final_cumulative_score": cumulative_score,
+        })
 
     for day in trading_days:
         month = pd.Timestamp(day).to_period("M")
@@ -110,33 +121,23 @@ def main() -> None:
 
         if current_month != month:
             if current_month is not None:
-                monthly_rows.append({
-                    "month": str(current_month),
-                    "opening_regime": opening_regime,
-                    "final_regime": previous_month_final,
-                    "days": sum(pd.Timestamp(d).to_period("M") == current_month for d in trading_days if month_start <= d < day),
-                    "regime_changes": month_changes,
-                    "total_event_count": month_event_count,
-                    "high_impact_event_count": month_high_count,
-                    "final_cumulative_score": cumulative_score,
-                })
-
+                close_month(str(current_month))
             current_month = month
             current_regime = seed.get(month_key, previous_month_final)
             if current_regime not in {"UP", "DOWN", "NEUTRAL"}:
                 current_regime = "NEUTRAL"
             opening_regime = current_regime
             cumulative_score = 0.0
-            month_start = day
+            month_days = 0
             month_event_count = 0
             month_high_count = 0
             month_changes = 0
 
+        day_regime_before = current_regime
         day_events = event_groups.get(day)
         daily_score = 0.0
         day_high = 0
         day_count = 0
-        regime_changed = False
 
         if day_events is not None:
             for _, ev in day_events.iterrows():
@@ -145,12 +146,10 @@ def main() -> None:
                 cumulative_score += score
                 daily_score += score
                 day_count += 1
-                if ev["impact"] == "HIGH":
-                    day_high += 1
+                day_high += int(ev["impact"] == "HIGH")
                 proposed = regime_for_score(cumulative_score, current_regime)
                 if proposed != current_regime:
                     current_regime = proposed
-                    regime_changed = True
                     month_changes += 1
                 event_rows.append({
                     "release_time": ev["release_time"].isoformat(),
@@ -165,6 +164,7 @@ def main() -> None:
                     "cumulative_month_score": cumulative_score,
                 })
 
+        month_days += 1
         month_event_count += day_count
         month_high_count += day_high
         daily_rows.append({
@@ -172,8 +172,8 @@ def main() -> None:
             "month": month_key,
             "opening_regime": opening_regime,
             "regime": current_regime,
-            "previous_regime": current_regime if not regime_changed else ("DOWN" if current_regime == "UP" else "UP"),
-            "regime_changed": regime_changed,
+            "previous_regime": day_regime_before,
+            "regime_changed": current_regime != day_regime_before,
             "daily_fundamental_score": daily_score,
             "cumulative_month_score": cumulative_score,
             "high_impact_event_count": day_high,
@@ -183,21 +183,11 @@ def main() -> None:
         previous_month_final = current_regime
 
     if current_month is not None:
-        monthly_rows.append({
-            "month": str(current_month),
-            "opening_regime": opening_regime,
-            "final_regime": previous_month_final,
-            "days": sum(pd.Timestamp(d).to_period("M") == current_month for d in trading_days if month_start <= d <= trading_days[-1]),
-            "regime_changes": month_changes,
-            "total_event_count": month_event_count,
-            "high_impact_event_count": month_high_count,
-            "final_cumulative_score": cumulative_score,
-        })
+        close_month(str(current_month))
 
     daily = pd.DataFrame(daily_rows, columns=DAILY_COLUMNS)
     event_state = pd.DataFrame(event_rows, columns=EVENT_STATE_COLUMNS)
     monthly = pd.DataFrame(monthly_rows, columns=MONTHLY_COLUMNS)
-
     daily.to_csv(OUT / "daily_economic_regime.csv", index=False)
     event_state.to_csv(OUT / "economic_event_state.csv", index=False)
     monthly.to_csv(OUT / "monthly_economic_regime.csv", index=False)
