@@ -113,6 +113,31 @@ def impact_label(cell) -> str:
     return ""
 
 
+def _class_tokens(tag) -> set[str]:
+    if tag is None:
+        return set()
+    classes = tag.get("class", [])
+    if isinstance(classes, str):
+        classes = classes.split()
+    return {str(x) for x in classes}
+
+
+def _find_cell(tr, field: str):
+    # Forex Factory has changed the exact combination of calendar cell classes
+    # over time. Match any td whose class tokens contain the semantic field name.
+    wanted = f"calendar__{field}"
+    for td in tr.find_all("td", recursive=False):
+        classes = _class_tokens(td)
+        if wanted in classes or any(wanted in c for c in classes):
+            return td
+    return None
+
+
+def _row_is_calendar(tr) -> bool:
+    classes = _class_tokens(tr)
+    return not classes or any("calendar__row" in c or "calendar_row" in c for c in classes)
+
+
 def scrape_week(day: date, session: requests.Session) -> list[dict]:
     url = f"https://www.forexfactory.com/calendar?week={week_key(day)}"
     last_error = None
@@ -121,31 +146,27 @@ def scrape_week(day: date, session: requests.Session) -> list[dict]:
             response = session.get(url, headers=HEADERS, timeout=30)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
-            table = soup.find("table", class_="calendar__table")
+            table = soup.find("table", class_=lambda value: value and "calendar__table" in value)
             if table is None:
                 raise RuntimeError(f"Calendar table not found: {url}")
 
             rows = []
             current_date = None
+            raw_calendar_rows = 0
             raw_eur_usd_rows = 0
-            for tr in table.select("tr.calendar__row.calendar_row"):
-                def cell(field: str):
-                    exact = tr.select_one(f"td.calendar__cell.calendar__{field}.{field}")
-                    if exact is not None:
-                        return exact
-                    return tr.select_one(f"td[class*='calendar__{field}']")
-
-                date_cell = cell("date")
-                time_cell = cell("time")
+            for tr in table.find_all("tr"):
+                if not _row_is_calendar(tr):
+                    continue
+                raw_calendar_rows += 1
+                date_cell = _find_cell(tr, "date")
+                time_cell = _find_cell(tr, "time")
                 if date_cell and date_cell.get_text(strip=True):
-                    current_date = resolve_calendar_date(date_cell.get_text(" ", strip=True), day)
+                    resolved = resolve_calendar_date(date_cell.get_text(" ", strip=True), day)
+                    if resolved is not None:
+                        current_date = resolved
 
-                currency_cell = cell("currency")
-                impact_cell = cell("impact")
-                event_cell = cell("event")
-                actual_cell = cell("actual")
-                forecast_cell = cell("forecast")
-                previous_cell = cell("previous")
+                currency_cell = _find_cell(tr, "currency")
+                event_cell = _find_cell(tr, "event")
                 if not (current_date and currency_cell and event_cell):
                     continue
 
@@ -154,14 +175,12 @@ def scrape_week(day: date, session: requests.Session) -> list[dict]:
                     continue
                 raw_eur_usd_rows += 1
 
-                impact = impact_label(impact_cell)
-                if not impact:
-                    # Do not silently discard the event. The calendar page exposes
-                    # the event itself even when the impact icon markup changes.
-                    # Treat unknown impact as LOW for ingestion only; the downstream
-                    # regime engine can still exclude LOW if configured to do so.
-                    impact = "LOW"
+                impact_cell = _find_cell(tr, "impact")
+                actual_cell = _find_cell(tr, "actual")
+                forecast_cell = _find_cell(tr, "forecast")
+                previous_cell = _find_cell(tr, "previous")
 
+                impact = impact_label(impact_cell) or "LOW"
                 event = event_cell.get_text(" ", strip=True)
                 actual = actual_cell.get_text(" ", strip=True) if actual_cell else ""
                 forecast = forecast_cell.get_text(" ", strip=True) if forecast_cell else ""
@@ -186,6 +205,8 @@ def scrape_week(day: date, session: requests.Session) -> list[dict]:
 
             if not rows and raw_eur_usd_rows:
                 raise RuntimeError(f"Found {raw_eur_usd_rows} EUR/USD rows but parsed 0 events: {url}")
+            if not rows and raw_calendar_rows == 0:
+                raise RuntimeError(f"Calendar table found but 0 calendar rows matched: {url}")
             return rows
         except (requests.RequestException, RuntimeError, ValueError) as exc:
             last_error = str(exc)
