@@ -1,0 +1,71 @@
+name: ZigZag Step 5 - Structural Regime Validation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'results/zigzag_quarterly/**'
+      - 'scripts/zigzag_structural_regime.py'
+      - 'scripts/zigzag_mt5.py'
+      - 'scripts/evaluate_zigzag_temporal.py'
+      - '.github/workflows/zigzag-structural-regime.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip pandas numpy numba pyarrow
+
+      - name: Validate Step 3 inputs
+        run: |
+          test -f results/zigzag_quarterly/quarter_top20.csv
+          test -f data/eurusd/eurusd_m1.csv
+
+      - name: Run Step 5
+        run: python scripts/zigzag_structural_regime.py
+
+      - name: Validate outputs
+        run: |
+          test -s results/zigzag_structural/structural_all_results.csv
+          test -s results/zigzag_structural/structural_depth_summary.csv
+          test -s results/zigzag_structural/regime_summary.csv
+          test -s results/zigzag_structural/structural_robustness.csv
+          python - <<'PY'
+          import pandas as pd
+          p='results/zigzag_structural/structural_all_results.csv'
+          df=pd.read_csv(p)
+          required=['depth','deviation','backstep','pivots','swings','median_swing_pips','median_bars','false_reversal_rate','continuation_rate','trend_rate','range_rate','m5_alignment_rate']
+          missing=[c for c in required if c not in df.columns]
+          assert not missing, missing
+          assert len(df) > 0
+          assert (df['pivots'] > 0).all()
+          assert ((df['false_reversal_rate'] >= 0) & (df['false_reversal_rate'] <= 1)).all()
+          assert ((df['m5_alignment_rate'].dropna() >= 0) & (df['m5_alignment_rate'].dropna() <= 1)).all()
+          print(df.groupby('depth').size())
+          PY
+
+      - name: Commit results
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add results/zigzag_structural/
+          git diff --cached --quiet || git commit -m 'Add Step 5 structural regime validation results'
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: zigzag-step5-structural-regime
+          path: results/zigzag_structural/
