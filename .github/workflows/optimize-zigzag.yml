@@ -1,0 +1,73 @@
+name: Optimize EURUSD M1 MT5 ZigZag
+
+on:
+  push:
+    paths:
+      - 'scripts/optimize_zigzag.py'
+      - 'src/zigzag_mt5.py'
+      - '.github/workflows/optimize-zigzag.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install analysis dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas pyarrow numba
+
+      - name: Run 1,000-config sweep
+        run: |
+          python scripts/optimize_zigzag.py \
+            --input data/eurusd/EURUSD_1m.parquet \
+            --output-dir results/zigzag \
+            --point 0.00001
+
+      - name: Validate results
+        run: |
+          test -s results/zigzag/all_results.csv
+          test -s results/zigzag/top20.csv
+          test -s results/zigzag/stable_regions.csv
+          python - <<'PY'
+          import pandas as pd
+          r = pd.read_csv('results/zigzag/all_results.csv')
+          assert len(r) == 1000, len(r)
+          assert r[['depth','deviation','backstep']].drop_duplicates().shape[0] == 1000
+          assert r.score.notna().all()
+          print(r.head(20).to_string(index=False))
+          PY
+
+      - name: Commit optimization results
+        run: |
+          git add results/zigzag/
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --cached --quiet; then
+            echo 'No result changes to commit.'
+          else
+            git commit -m 'Add EURUSD M1 ZigZag optimization results'
+            git push origin HEAD:main
+          fi
+
+      - name: Upload optimization artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EURUSD-M1-MT5-ZigZag-Optimization
+          path: results/zigzag/
+          retention-days: 30
+          compression-level: 6
