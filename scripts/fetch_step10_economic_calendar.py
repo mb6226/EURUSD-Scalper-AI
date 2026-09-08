@@ -19,6 +19,8 @@ UTC = ZoneInfo("UTC")
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; EURUSD-Scalper-AI/1.0; research)"}
 MAX_RETRIES = 4
 BACKOFF_SECONDS = (5, 15, 30, 60)
+TIME_RE = re.compile(r"^(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<ampm>am|pm)$", re.IGNORECASE)
+DATE_RE = re.compile(r"^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(?P<month>[A-Z][a-z]{2})\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?$", re.IGNORECASE)
 
 
 def parse_number(value: str):
@@ -73,17 +75,18 @@ def week_key(day: date) -> str:
 
 
 def resolve_calendar_date(text: str, week_day: date) -> date | None:
-    m = re.search(r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+([A-Z][a-z]{2})\s+(\d{1,2})", text)
+    normalized = " ".join(str(text).split())
+    m = DATE_RE.fullmatch(normalized)
     if not m:
         return None
-    month_num = datetime.strptime(m.group(1), "%b").month
+    month_num = datetime.strptime(m.group("month"), "%b").month
     year = week_day.year
     if week_day.month == 12 and month_num == 1:
         year += 1
     elif week_day.month == 1 and month_num == 12:
         year -= 1
     try:
-        return date(year, month_num, int(m.group(2)))
+        return date(year, month_num, int(m.group("day")))
     except ValueError:
         return None
 
@@ -100,32 +103,22 @@ def _class_tokens(tag) -> set[str]:
 def extract_page_timezone(soup: BeautifulSoup) -> tuple[str, ZoneInfo]:
     """Extract the complete advertised IANA timezone without accepting fragments."""
     text = soup.get_text(" ", strip=True)
-    # Require a complete region/city pair. In particular, never accept fragments
-    # such as ``America/New`` produced by an incomplete HTML attribute/value.
     candidates = []
     for pattern in (
         r"Calendar\s+Time\s+Zone\s*:\s*([A-Za-z_]+/[A-Za-z0-9_+\-]+(?:/[A-Za-z0-9_+\-]+)*)",
         r"Time\s+Zone\s*:\s*([A-Za-z_]+/[A-Za-z0-9_+\-]+(?:/[A-Za-z0-9_+\-]+)*)",
     ):
         candidates.extend(re.findall(pattern, text, flags=re.IGNORECASE))
-
     for name in candidates:
         try:
             return name, ZoneInfo(name)
         except ZoneInfoNotFoundError:
             continue
 
-    # Forex Factory's HTML can expose the timezone as a user-facing label rather
-    # than a direct IANA identifier. Map only known, explicit labels; never guess
-    # from a malformed prefix.
     label_map = {
-        "GMT": "Etc/GMT",
-        "UTC": "UTC",
-        "EUROPE/LONDON": "Europe/London",
-        "LONDON": "Europe/London",
-        "NEW YORK": "America/New_York",
-        "NEW YORK TIME": "America/New_York",
-        "TOKYO": "Asia/Tokyo",
+        "GMT": "Etc/GMT", "UTC": "UTC", "EUROPE/LONDON": "Europe/London",
+        "LONDON": "Europe/London", "NEW YORK": "America/New_York",
+        "NEW YORK TIME": "America/New_York", "TOKYO": "Asia/Tokyo",
         "SYDNEY": "Australia/Sydney",
     }
     upper = text.upper()
@@ -135,20 +128,18 @@ def extract_page_timezone(soup: BeautifulSoup) -> tuple[str, ZoneInfo]:
                 return name, ZoneInfo(name)
             except ZoneInfoNotFoundError:
                 pass
-
     raise RuntimeError("Forex Factory page did not expose a complete supported calendar timezone")
 
 
 def _find_cell(tr, field: str):
-    """Prefer Forex Factory's canonical field selector, then exact class token."""
+    """Prefer Forex Factory's canonical field selector, then an exact class token."""
     selector = f"td.calendar__cell.calendar__{field}.{field}"
     exact = tr.select_one(selector)
     if exact is not None:
         return exact
     wanted = f"calendar__{field}"
     for td in tr.find_all("td", recursive=False):
-        classes = _class_tokens(td)
-        if wanted in classes:
+        if wanted in _class_tokens(td):
             return td
     return None
 
@@ -173,7 +164,6 @@ def _numeric_timestamp(value: str | None) -> datetime | None:
 
 
 def row_source_timestamp(tr) -> datetime | None:
-    """Use an explicit source timestamp when the row exposes one."""
     attrs = (
         "data-timestamp", "data-event-timestamp", "data-time",
         "data-utc-timestamp", "data-release-timestamp",
@@ -195,10 +185,7 @@ def impact_label(cell) -> str:
             value = node.get(attr)
             if value:
                 candidates.append(str(value))
-        classes = node.get("class", [])
-        if isinstance(classes, str):
-            classes = classes.split()
-        candidates.extend(str(c) for c in classes)
+        candidates.extend(str(c) for c in node.get("class", []))
     candidates.append(cell.get_text(" ", strip=True))
     text = " ".join(candidates).upper()
     if any(x in text for x in ("HIGH IMPACT", "IMPACT-RED", "IMPACT_RED", "FF-IMPACT-RED", "FF_IMPACT_RED")):
@@ -210,10 +197,65 @@ def impact_label(cell) -> str:
     return ""
 
 
+def _visible_time_text(time_cell) -> str | None:
+    """Return only the real release-time token from the canonical time cell.
+
+    Forex Factory may include historical/reference nodes inside the same cell. We
+    intentionally inspect the semantic <time> node first and only accept a strict
+    standalone HH:MMam/pm token. No free-form cell text is ever passed to strptime.
+    """
+    if time_cell is None:
+        return None
+
+    nodes = time_cell.find_all("time")
+    candidates = []
+    for node in nodes:
+        for value in (node.get("datetime"), node.get_text(" ", strip=True)):
+            if value:
+                candidates.append(value)
+
+    for value in candidates:
+        match = TIME_RE.fullmatch(" ".join(str(value).split()))
+        if match:
+            return f"{int(match.group('hour'))}:{match.group('minute') or '00'}{match.group('ampm').lower()}"
+
+    direct_text = time_cell.get_text(" ", strip=True)
+    for token in re.findall(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", direct_text, flags=re.IGNORECASE):
+        normalized = " ".join(token.split())
+        match = TIME_RE.fullmatch(normalized)
+        if match:
+            return f"{int(match.group('hour'))}:{match.group('minute') or '00'}{match.group('ampm').lower()}"
+    return None
+
+
+def _visible_date_text(date_cell) -> str | None:
+    """Return only a strict weekday/month/day date token from the date cell."""
+    if date_cell is None:
+        return None
+    nodes = date_cell.find_all(True)
+    candidates = []
+    for node in nodes:
+        for attr in ("datetime", "data-date"):
+            value = node.get(attr)
+            if value:
+                candidates.append(value)
+        text = node.get_text(" ", strip=True)
+        if text:
+            candidates.append(text)
+    candidates.append(date_cell.get_text(" ", strip=True))
+
+    for value in candidates:
+        normalized = " ".join(str(value).split())
+        if DATE_RE.fullmatch(normalized):
+            return normalized
+    return None
+
+
 def parse_local_event_datetime(current_date: date, time_text: str, source_tz: ZoneInfo) -> datetime:
-    normalized = time_text.strip()
-    if not normalized or "day" in normalized.lower() or "all day" in normalized.lower() or "tentative" in normalized.lower():
-        normalized = "12:00am"
+    match = TIME_RE.fullmatch(" ".join(str(time_text).split()))
+    if not match:
+        raise ValueError(f"Ambiguous/invalid Forex Factory time cell: {time_text!r}")
+    normalized = f"{int(match.group('hour'))}:{match.group('minute') or '00'}{match.group('ampm').lower()}"
     naive = datetime.strptime(f"{current_date} {normalized}", "%Y-%m-%d %I:%M%p")
     return naive.replace(tzinfo=source_tz)
 
@@ -241,8 +283,9 @@ def scrape_week(day: date, session: requests.Session) -> list[dict]:
                 raw_calendar_rows += 1
                 date_cell = _find_cell(tr, "date")
                 time_cell = _find_cell(tr, "time")
-                if date_cell and date_cell.get_text(strip=True):
-                    resolved = resolve_calendar_date(date_cell.get_text(" ", strip=True), day)
+                date_text = _visible_date_text(date_cell)
+                if date_text:
+                    resolved = resolve_calendar_date(date_text, day)
                     if resolved is not None:
                         current_date = resolved
 
@@ -250,7 +293,6 @@ def scrape_week(day: date, session: requests.Session) -> list[dict]:
                 event_cell = _find_cell(tr, "event")
                 if not (current_date and currency_cell and event_cell):
                     continue
-
                 currency = currency_cell.get_text(" ", strip=True).upper()
                 if currency not in {"EUR", "USD"}:
                     continue
@@ -265,7 +307,10 @@ def scrape_week(day: date, session: requests.Session) -> list[dict]:
                 actual = actual_cell.get_text(" ", strip=True) if actual_cell else ""
                 forecast = forecast_cell.get_text(" ", strip=True) if forecast_cell else ""
                 previous = previous_cell.get_text(" ", strip=True) if previous_cell else ""
-                time_text = time_cell.get_text(" ", strip=True) if time_cell else "12:00am"
+
+                time_text = _visible_time_text(time_cell)
+                if time_text is None:
+                    raise RuntimeError(f"EUR/USD row has no unambiguous release time in canonical time cell: {url}")
 
                 source_dt = row_source_timestamp(tr)
                 if source_dt is None:
@@ -323,6 +368,11 @@ def main() -> None:
                 failures.append({"week_start": cursor.isoformat(), "week_key": week_key(cursor), "error": str(exc)})
             cursor += timedelta(days=7)
 
+    if failures:
+        FAILURES.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(failures, columns=["week_start", "week_key", "error"]).to_csv(FAILURES, index=False)
+        raise RuntimeError(f"Historical calendar fetch incomplete: {len(failures)}/{requested_weeks} weeks failed; refusing to publish partial Step 10 data")
+
     df = pd.DataFrame(rows)
     if df.empty:
         raise RuntimeError("No EUR/USD economic events were downloaded")
@@ -337,27 +387,24 @@ def main() -> None:
         raise RuntimeError("Economic calendar release_time is not monotonic after normalization")
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    FAILURES.parent.mkdir(parents=True, exist_ok=True)
     FETCH_STATS.parent.mkdir(parents=True, exist_ok=True)
     tmp_out = OUT.with_suffix(".tmp")
     df.to_csv(tmp_out, index=False)
     tmp_out.replace(OUT)
 
-    pd.DataFrame(failures, columns=["week_start", "week_key", "error"]).to_csv(FAILURES, index=False)
+    pd.DataFrame([], columns=["week_start", "week_key", "error"]).to_csv(FAILURES, index=False)
     pd.DataFrame([{
         "price_start": start.isoformat(),
         "price_end": end.isoformat(),
         "requested_weeks": requested_weeks,
-        "successful_weeks": requested_weeks - len(failures),
-        "failed_weeks": len(failures),
+        "successful_weeks": requested_weeks,
+        "failed_weeks": 0,
         "event_count": len(df),
         "timezone_count": df["source_timezone"].nunique(),
     }]).to_csv(FETCH_STATS, index=False)
 
     print(f"Saved {len(df)} EUR/USD events to {OUT}")
-    print(f"Weeks: {requested_weeks - len(failures)} successful, {len(failures)} failed")
-    if failures:
-        print(f"WARNING: failed weeks recorded in {FAILURES}")
+    print(f"Weeks: {requested_weeks} successful, 0 failed")
 
 
 if __name__ == "__main__":
