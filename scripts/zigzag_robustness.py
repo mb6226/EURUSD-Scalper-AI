@@ -5,7 +5,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from scripts.evaluate_zigzag_temporal import metrics_for_period
+# This script is executed directly from the repository root by GitHub Actions.
+# Import the sibling module rather than relying on the repository being installed as a package.
+SCRIPT_DIR = Path(__file__).resolve().parent
+import sys
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from evaluate_zigzag_temporal import metrics_for_period
 
 
 def inherited_region(path: Path) -> tuple[int, list[int], list[int]]:
@@ -24,9 +30,7 @@ def inherited_region(path: Path) -> tuple[int, list[int], list[int]]:
 def build_candidates(step3_path: Path) -> pd.DataFrame:
     center, inherited_devs, inherited_backsteps = inherited_region(step3_path)
     depths = list(range(center - 50, center + 51, 5))
-    # Step 3 showed the deviation range itself is stable; keep that range intact.
     deviations = inherited_devs
-    # Probe one neighboring backstep beyond the Step 3 stable pair without exploding the grid.
     bmax = max(inherited_backsteps)
     backsteps = sorted(set(inherited_backsteps + [bmax + 20]))
     rows = [(depth, deviation, backstep)
