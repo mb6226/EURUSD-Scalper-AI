@@ -1,0 +1,2 @@
+depth,deviation_points,backstep,lwma_fast,lwma_slow,pivot_count,swing_count,trend_up_midpoints,trend_down_midpoints,trend_neutral_midpoints,aligned_swing_count,aligned_pct,up_swing_count,down_swing_count,aligned_up_count,aligned_down_count,median_aligned_swing_pips,mean_aligned_swing_pips,median_aligned_bars,mean_aligned_bars
+350,125,40,55,220,732,731,333,398,0,311,42.54445964432285,365,366,139,172,47.900000000000716,56.07459807073947,547.0,654.3022508038586
