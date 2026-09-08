@@ -1,0 +1,7 @@
+EURUSD historical OHLCV
+Source: HistData.com Generic ASCII M1
+Requested range: 2025-09-08 to 2026-09-08
+1m rows: 369,189
+5m rows: 74,180
+Volume: source tick volume, not centralized FX volume
+5m bars are aggregated from canonical 1m bars
