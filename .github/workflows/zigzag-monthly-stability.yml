@@ -79,6 +79,10 @@ jobs:
             echo 'No Step 2 result changes to commit.'
           else
             git commit -m 'Add monthly ZigZag stability results'
+            # Another workflow/run may have advanced main after checkout.
+            # Rebase our result commit onto the latest remote main before pushing.
+            git fetch origin main
+            git rebase origin/main
             git push origin HEAD:main
           fi
 
