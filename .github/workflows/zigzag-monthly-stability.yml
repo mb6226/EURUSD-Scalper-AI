@@ -1,0 +1,90 @@
+name: ZigZag Step 2 - Monthly Stability
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'results/zigzag/top20.csv'
+      - 'results/zigzag/stable_regions.csv'
+      - 'scripts/evaluate_zigzag_temporal.py'
+      - '.github/workflows/zigzag-monthly-stability.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  monthly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas pyarrow numba
+
+      - name: Build candidates from Step 1 results
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          top = pd.read_csv('results/zigzag/top20.csv')
+          stable = pd.read_csv('results/zigzag/stable_regions.csv')
+          cols = ['depth','deviation','backstep']
+          pd.concat([top[cols], stable[cols]], ignore_index=True).drop_duplicates().to_csv(
+              'results/zigzag/monthly_candidates.csv', index=False
+          )
+          print('Candidates:', len(pd.read_csv('results/zigzag/monthly_candidates.csv')))
+          PY
+
+      - name: Run monthly stability analysis
+        run: |
+          python scripts/evaluate_zigzag_temporal.py \
+            --input data/eurusd/EURUSD_1m.parquet \
+            --candidates results/zigzag/monthly_candidates.csv \
+            --output-dir results/zigzag_monthly \
+            --mode month \
+            --point 0.00001
+
+      - name: Validate monthly results
+        run: |
+          test -s results/zigzag_monthly/month_all_results.csv
+          test -s results/zigzag_monthly/month_stability.csv
+          test -s results/zigzag_monthly/month_top20.csv
+          python - <<'PY'
+          import pandas as pd
+          r = pd.read_csv('results/zigzag_monthly/month_all_results.csv')
+          s = pd.read_csv('results/zigzag_monthly/month_stability.csv')
+          assert len(r) > 0
+          assert len(s) > 0
+          assert r.period.nunique() >= 10
+          print('Periods:', r.period.nunique())
+          print(s.head(20).to_string(index=False))
+          PY
+
+      - name: Commit Step 2 results
+        run: |
+          git add results/zigzag_monthly/ results/zigzag/monthly_candidates.csv
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --cached --quiet; then
+            echo 'No Step 2 result changes to commit.'
+          else
+            git commit -m 'Add monthly ZigZag stability results'
+            git push origin HEAD:main
+          fi
+
+      - name: Upload Step 2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EURUSD-M1-ZigZag-Monthly-Stability
+          path: results/zigzag_monthly/
+          retention-days: 30
