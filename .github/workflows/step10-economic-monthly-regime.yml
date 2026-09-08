@@ -5,8 +5,10 @@ on:
   push:
     paths:
       - "scripts/export_step10_economic_monthly_regime.py"
+      - "scripts/fetch_step10_economic_calendar.py"
       - "data/economic/economic_calendar.csv"
       - "data/economic/monthly_regime_seed.csv"
+      - "data/eurusd/EURUSD_1m.csv"
 
 permissions:
   contents: write
@@ -22,20 +24,23 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install pandas
+        run: pip install pandas requests beautifulsoup4
 
-      - name: Run Step 10
+      - name: Fetch historical EUR/USD economic calendar
+        run: python scripts/fetch_step10_economic_calendar.py
+
+      - name: Build point-in-time stateful regime
         run: python scripts/export_step10_economic_monthly_regime.py
 
-      - name: Commit Step 10 results
+      - name: Commit Step 10 data and results
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add results/step10_economic
+          git add data/economic/economic_calendar.csv results/step10_economic
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
           fi
-          git commit -m "Add Step 10 economic monthly regime"
+          git commit -m "Complete Step 10 economic regime data and state"
           git pull --rebase origin main
           git push origin HEAD:main
