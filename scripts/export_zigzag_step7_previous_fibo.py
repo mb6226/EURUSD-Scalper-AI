@@ -19,7 +19,7 @@ POINT = 0.00001
 DEPTH = 350
 DEVIATION = 125
 BACKSTEP = 40
-FIB_RATIOS = (0.236, 0.382, 0.500, 0.618, 0.786, 1.000)
+FIB_RATIOS = (0.0, 0.236, 0.382, 0.500, 0.618, 0.786, 1.000, 1.272, 1.618, 2.000, 2.618, 3.618, 4.236)
 
 
 def load_data() -> pd.DataFrame:
@@ -34,19 +34,35 @@ def load_data() -> pd.DataFrame:
     return df.loc[df.index.notna()].sort_index()[["open", "high", "low", "close"]]
 
 
-def fib_prices(start_price: float, end_price: float) -> dict[str, float]:
+def fib_price(start_price: float, end_price: float, ratio: float) -> float:
     lo, hi = sorted((start_price, end_price))
     rng = hi - lo
-    out: dict[str, float] = {}
     if end_price > start_price:
-        # Previous swing was UP: retracement is measured down from its high.
-        for r in FIB_RATIOS:
-            out[f"fib_{r*100:.1f}_price"] = hi - rng * r
-    else:
-        # Previous swing was DOWN: retracement is measured up from its low.
-        for r in FIB_RATIOS:
-            out[f"fib_{r*100:.1f}_price"] = lo + rng * r
-    return out
+        return hi - rng * ratio
+    return lo + rng * ratio
+
+
+def retracement_pct(price: float, prior_start: float, prior_end: float) -> float:
+    """Unbounded retracement from the prior swing endpoint: 0% = no retrace, 100% = prior start, >100% = extension beyond prior start."""
+    rng = abs(prior_end - prior_start)
+    if rng == 0:
+        return 0.0
+    if prior_end > prior_start:  # prior UP, retrace downward
+        return (prior_end - price) / rng * 100.0
+    # prior DOWN, retrace upward
+    return (price - prior_end) / rng * 100.0
+
+
+def fib_zone(retr: float) -> str:
+    if retr < 0:
+        return "<0"
+    levels = [23.6, 38.2, 50.0, 61.8, 78.6, 100.0, 127.2, 161.8, 200.0, 261.8, 361.8, 423.6]
+    prev = 0.0
+    for level in levels:
+        if retr < level:
+            return f"{prev:.1f}-{level:.1f}"
+        prev = level
+    return ">=423.6"
 
 
 def main() -> None:
@@ -86,31 +102,10 @@ def main() -> None:
         })
 
     rows = []
+    point_rows = []
     for i, cur in enumerate(swings):
         row = dict(cur)
         if i == 0:
-            row.update({
-                "prior_swing_id": pd.NA,
-                "prior_direction": pd.NA,
-                "prior_swing_pips": pd.NA,
-                "prior_bars": pd.NA,
-                "prior_start_price": pd.NA,
-                "prior_end_price": pd.NA,
-                "prior_fib_23.6_price": pd.NA,
-                "prior_fib_38.2_price": pd.NA,
-                "prior_fib_50.0_price": pd.NA,
-                "prior_fib_61.8_price": pd.NA,
-                "prior_fib_78.6_price": pd.NA,
-                "prior_fib_100.0_price": pd.NA,
-                "current_end_vs_prior_range_pct": pd.NA,
-                "current_end_vs_prior_236_pct": pd.NA,
-                "current_end_vs_prior_382_pct": pd.NA,
-                "current_end_vs_prior_500_pct": pd.NA,
-                "current_end_vs_prior_618_pct": pd.NA,
-                "current_end_vs_prior_786_pct": pd.NA,
-                "current_end_vs_prior_1000_pct": pd.NA,
-                "current_end_fib_zone": pd.NA,
-            })
             rows.append(row)
             continue
 
@@ -123,45 +118,40 @@ def main() -> None:
             "prior_start_price": prior["start_price"],
             "prior_end_price": prior["end_price"],
         })
-        fps = fib_prices(prior["start_price"], prior["end_price"])
-        row.update({f"prior_{k}": v for k, v in fps.items()})
+        for r in FIB_RATIOS[1:]:
+            row[f"prior_fib_{r*100:.1f}_price"] = fib_price(prior["start_price"], prior["end_price"], r)
 
-        prior_lo, prior_hi = sorted((prior["start_price"], prior["end_price"]))
-        prior_rng = prior_hi - prior_lo
-        end = cur["end_price"]
-        row["current_end_vs_prior_range_pct"] = ((end - prior_lo) / prior_rng * 100.0) if prior_rng else 0.0
-
-        # Express current endpoint in the same retracement convention as the prior swing.
-        if prior["direction"] == "UP":
-            row["current_end_vs_prior_236_pct"] = (prior["end_price"] - end) / prior_rng * 100.0 if prior_rng else 0.0
-        else:
-            row["current_end_vs_prior_236_pct"] = (end - prior["end_price"]) / prior_rng * 100.0 if prior_rng else 0.0
-        # The values above are a normalized retracement percentage; named copies make
-        # the dataset explicit for downstream research without pretending they are prices.
-        for pct in (38.2, 50.0, 61.8, 78.6, 100.0):
-            row[f"current_end_vs_prior_{pct:.1f}_pct"] = row["current_end_vs_prior_236_pct"]
-
-        retr = row["current_end_vs_prior_236_pct"]
-        if retr < 23.6:
-            zone = "<23.6"
-        elif retr < 38.2:
-            zone = "23.6-38.2"
-        elif retr < 50.0:
-            zone = "38.2-50.0"
-        elif retr < 61.8:
-            zone = "50.0-61.8"
-        elif retr < 78.6:
-            zone = "61.8-78.6"
-        elif retr < 100.0:
-            zone = "78.6-100.0"
-        else:
-            zone = ">=100.0"
-        row["current_end_fib_zone"] = zone
+        end_retr = retracement_pct(cur["end_price"], prior["start_price"], prior["end_price"])
+        row["current_end_retracement_pct"] = end_retr
+        row["current_end_fib_zone"] = fib_zone(end_retr)
         rows.append(row)
 
+        # Every M1 point/bar inside the current swing is evaluated against the prior swing.
+        # For an UP prior swing, the adverse/retracement side is the bar LOW; for a DOWN
+        # prior swing, it is the bar HIGH. The endpoint/reversal is separately retained.
+        for bar in range(cur["start_bar"], cur["end_bar"] + 1):
+            if prior["direction"] == "UP":
+                point_price = float(data.low.iloc[bar])
+            else:
+                point_price = float(data.high.iloc[bar])
+            retr = retracement_pct(point_price, prior["start_price"], prior["end_price"])
+            point_rows.append({
+                "swing_id": cur["swing_id"],
+                "prior_swing_id": prior["swing_id"],
+                "timestamp": data.index[bar],
+                "bar": bar,
+                "prior_direction": prior["direction"],
+                "point_price": point_price,
+                "retracement_pct": retr,
+                "fib_zone": fib_zone(retr),
+                "is_swing_reversal": bar == cur["end_bar"],
+            })
+
     out = pd.DataFrame(rows)
+    points = pd.DataFrame(point_rows)
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
     out.to_csv(RESULT_DIR / "swings_with_previous_fibo.csv", index=False)
+    points.to_csv(RESULT_DIR / "swing_points_previous_fibo.csv", index=False)
 
     valid = out.iloc[1:].copy() if len(out) > 1 else out.iloc[0:0].copy()
     if len(valid):
@@ -179,12 +169,17 @@ def main() -> None:
         "pivot_count": len(pivots),
         "swing_count": len(out),
         "fibo_eligible_swings": len(valid),
+        "point_observations": len(points),
         "min_swing_pips": out["swing_pips"].min() if len(out) else math.nan,
         "max_swing_pips": out["swing_pips"].max() if len(out) else math.nan,
         "median_swing_pips": out["swing_pips"].median() if len(out) else math.nan,
         "min_prior_swing_pips": valid["prior_swing_pips"].min() if len(valid) else math.nan,
         "max_prior_swing_pips": valid["prior_swing_pips"].max() if len(valid) else math.nan,
         "median_prior_swing_pips": valid["prior_swing_pips"].median() if len(valid) else math.nan,
+        "min_reversal_retracement_pct": valid["current_end_retracement_pct"].min() if len(valid) else math.nan,
+        "max_reversal_retracement_pct": valid["current_end_retracement_pct"].max() if len(valid) else math.nan,
+        "median_reversal_retracement_pct": valid["current_end_retracement_pct"].median() if len(valid) else math.nan,
+        "mean_reversal_retracement_pct": valid["current_end_retracement_pct"].mean() if len(valid) else math.nan,
         "min_bars": out["bars"].min() if len(out) else math.nan,
         "max_bars": out["bars"].max() if len(out) else math.nan,
         "median_bars": out["bars"].median() if len(out) else math.nan,
@@ -199,10 +194,21 @@ def main() -> None:
             "count": len(x),
             "median_prior_swing_pips": x["prior_swing_pips"].median() if len(x) else math.nan,
             "median_current_swing_pips": x["swing_pips"].median() if len(x) else math.nan,
-            "median_current_end_retracement_pct": x["current_end_vs_prior_236_pct"].median() if len(x) else math.nan,
-            "mean_current_end_retracement_pct": x["current_end_vs_prior_236_pct"].mean() if len(x) else math.nan,
+            "median_reversal_retracement_pct": x["current_end_retracement_pct"].median() if len(x) else math.nan,
+            "mean_reversal_retracement_pct": x["current_end_retracement_pct"].mean() if len(x) else math.nan,
         })
     pd.DataFrame(stats).to_csv(RESULT_DIR / "previous_fibo_direction_stats.csv", index=False)
+
+    # Use the exact unbounded reversal value for distribution: 0-23.6, ..., 78.6-100,
+    # then extensions beyond 100 rather than clipping all extensions into >=100.
+    ext_bins = [0, 23.6, 38.2, 50, 61.8, 78.6, 100, 127.2, 161.8, 200, 261.8, 361.8, 423.6, float("inf")]
+    ext_labels = ["0-23.6", "23.6-38.2", "38.2-50", "50-61.8", "61.8-78.6", "78.6-100", "100-127.2", "127.2-161.8", "161.8-200", "200-261.8", "261.8-361.8", "361.8-423.6", ">=423.6"]
+    if len(valid):
+        dist = valid.assign(reversal_fib_bucket=pd.cut(valid["current_end_retracement_pct"], bins=ext_bins, labels=ext_labels, right=False)).groupby("reversal_fib_bucket", observed=False).size().reset_index(name="count")
+        dist["pct"] = dist["count"] / len(valid)
+    else:
+        dist = pd.DataFrame(columns=["reversal_fib_bucket", "count", "pct"])
+    dist.to_csv(RESULT_DIR / "reversal_fibo_distribution.csv", index=False)
 
 
 if __name__ == "__main__":
